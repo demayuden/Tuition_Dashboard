@@ -19,20 +19,38 @@ export default function DashboardGrid() {
 
   useEffect(() => { load(); }, []);
 
-  const togglePayment = async (pkgId:number, paid:boolean) => {
+   const togglePayment = async (pkgId:number, paid:boolean) => {
     try {
-      await api.post(`/packages/${pkgId}/payment?paid=${paid}`);
-      await load();
-    } catch (e) { console.error(e); alert("Toggle payment failed"); }
+      // Backend exposes mark_paid / mark_unpaid under /students/packages/{id}
+      const url = paid
+        ? `/students/packages/${pkgId}/mark_paid`
+        : `/students/packages/${pkgId}/mark_unpaid`;
+
+      await api.post(url);
+      await load(); // refresh list
+    } catch (e) {
+      console.error("togglePayment error", e);
+      alert("Toggle payment failed");
+    }
   };
 
   const regenerate = async (pkgId:number) => {
     if (!confirm("Regenerate lessons for this package? This will overwrite non-manual lessons.")) return;
     try {
-      await api.post(`/packages/${pkgId}/regenerate`);
+      // If your backend has regenerate endpoint at /students/packages/{id}/regenerate
+      // otherwise create it in backend or call the proper path.
+      await api.post(`/students/packages/${pkgId}/regenerate`);
       await load();
       alert("Regenerated");
-    } catch (e) { console.error(e); alert("Regeneration failed"); }
+    } catch (e) {
+      console.error("regenerate error", e);
+      // helpful message if backend endpoint missing
+      if (e?.response?.status === 404) {
+        alert("Regenerate endpoint not found on backend. Add /students/packages/{id}/regenerate route.");
+      } else {
+        alert("Regeneration failed");
+      }
+    }
   };
 
   return (

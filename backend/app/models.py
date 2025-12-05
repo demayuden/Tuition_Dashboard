@@ -1,3 +1,4 @@
+# backend/app/models.py
 from sqlalchemy import Column, Integer, String, Date, Boolean, ForeignKey, DateTime, UniqueConstraint
 from sqlalchemy.orm import relationship
 from .db import Base
@@ -6,36 +7,35 @@ from datetime import datetime
 class Student(Base):
     __tablename__ = "students"
 
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
-    cefr = Column(String, nullable=True)
-    group_name = Column(String, nullable=True)
-
+    student_id = Column("student_id", Integer, primary_key=True, index=True)
+    name = Column("name", String, nullable=False)
+    cefr = Column("CEFR", String, nullable=True)           # keeps the header case you asked
+    group_name = Column("group", String, nullable=True)    # "group" as requested
     # 0=Mon, 1=Tue, ..., 6=Sun
-    lesson_day_1 = Column(Integer, nullable=False)
-    lesson_day_2 = Column(Integer, nullable=True)
+    lesson_day_1 = Column("lesson_day_1", Integer, nullable=False)
+    lesson_day_2 = Column("lesson_day_2", Integer, nullable=True)
 
-    package_size = Column(Integer, nullable=False)  # 4 or 8
-    start_date = Column(Date, nullable=False)
+    package_size = Column("package_size", Integer, nullable=False)  # 4 or 8
+    start_date = Column("start_date", Date, nullable=False)
 
-    status = Column(String, default="active")
+    status = Column("status", String, default="active")
 
-    # Relationships
     packages = relationship("Package", back_populates="student", cascade="all, delete-orphan")
 
 
 class Package(Base):
     __tablename__ = "packages"
 
-    id = Column(Integer, primary_key=True, index=True)
-    student_id = Column(Integer, ForeignKey("students.id"), nullable=False)
+    package_id = Column("package_id", Integer, primary_key=True, index=True)
+    student_id = Column("student_id", Integer, ForeignKey("students.student_id"), nullable=False)
 
-    package_size = Column(Integer, nullable=False)  # 4 or 8
-    payment_status = Column(Boolean, default=False)
+    package_size = Column("package_size", Integer, nullable=False)  # 4 or 8
+    # Optional: you asked for first_lesson_date in the desired model — keep created_at too
+    first_lesson_date = Column("first_lesson_date", Date, nullable=True)
+    payment_status = Column("payment_status", Boolean, default=False)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column("created_at", DateTime, default=datetime.utcnow)
 
-    # Relationship
     student = relationship("Student", back_populates="packages")
     lessons = relationship("Lesson", back_populates="package", cascade="all, delete-orphan")
 
@@ -43,14 +43,14 @@ class Package(Base):
 class Lesson(Base):
     __tablename__ = "lessons"
 
-    id = Column(Integer, primary_key=True, index=True)
-    package_id = Column(Integer, ForeignKey("packages.id"), nullable=False)
+    lesson_id = Column("lesson_id", Integer, primary_key=True, index=True)
+    package_id = Column("package_id", Integer, ForeignKey("packages.package_id"), nullable=False)
 
-    lesson_number = Column(Integer, nullable=False)   # 1..4 or 1..8
-    lesson_date = Column(Date, nullable=False)
+    lesson_number = Column("lesson_number", Integer, nullable=False)   # 1..4 or 1..8
+    lesson_date = Column("lesson_date", Date, nullable=False)
 
-    is_first = Column(Boolean, default=False)
-    is_manual_override = Column(Boolean, default=False)
+    is_first = Column("is_first", Boolean, default=False)
+    is_manual_override = Column("is_manual_override", Boolean, default=False)
 
     package = relationship("Package", back_populates="lessons")
 
@@ -62,8 +62,8 @@ class Lesson(Base):
 class Closure(Base):
     __tablename__ = "closures"
 
-    id = Column(Integer, primary_key=True, index=True)
-    start_date = Column(Date, nullable=False)
-    end_date = Column(Date, nullable=False)
-    reason = Column(String, nullable=True)
-    type = Column(String, nullable=True)
+    id = Column("closure_id", Integer, primary_key=True, index=True)
+    start_date = Column("start_date", Date, nullable=False)
+    end_date = Column("end_date", Date, nullable=False)
+    reason = Column("reason", String, nullable=True)
+    type = Column("type", String, nullable=True)
