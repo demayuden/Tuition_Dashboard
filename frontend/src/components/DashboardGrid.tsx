@@ -189,10 +189,10 @@ export default function DashboardGrid() {
       <div className="mb-4">
         <button
           onClick={() => window.location.href = "/"}
-          className="flex items-center text-blue-600 hover:text-blue-800"
+          className="text-blue-600 hover:text-blue-800 transition-transform duration-200 hover:-translate-x-1"
         >
-          <span className="text-4xl mr-2">←</span>
-        </button>
+          <span className="text-4xl">←</span>
+      </button>
       </div>
 
       <div className="flex items-center justify-between mb-4">

@@ -68,12 +68,12 @@ export default function ClosuresManager() {
     <div className="p-6">
       {/* Back Button */}
       <div className="mb-4">
-        <button
+         <button
           onClick={() => window.location.href = "/"}
-          className="flex items-center text-blue-600 hover:text-blue-800"
+          className="text-blue-600 hover:text-blue-800 transition-transform duration-200 hover:-translate-x-1"
         >
-          <span className="text-4xl mr-2">←</span> 
-        </button>
+          <span className="text-4xl">←</span>
+         </button>
       </div>
       <h2 className="text-xl font-semibold mb-3">Closures (Holidays / Breaks)</h2>
 
