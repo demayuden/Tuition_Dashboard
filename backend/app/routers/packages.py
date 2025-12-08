@@ -112,17 +112,49 @@ def regenerate_preview_get(package_id: int, db: Session = Depends(get_db)):
     return {"preview": True, "package_id": package_id, "proposed_lessons": out}
 
 @extra_router.get("/export/dashboard.xlsx")
-def export_dashboard_xlsx(db: Session = Depends(get_db)):
+def export_dashboard_xlsx(
+    tab: str = Query("all", regex="^(all|4|8)$"),
+    group: str = Query("", description="Group name (optional)"),
+    day: str = Query("", description="Day number 0..6 (optional)"),
+    db: Session = Depends(get_db)
+):
     """
-    Export dashboard to an Excel file with two sheets:
-      - '4-lesson' : rows for packages with package_size == 4
-      - '8-lesson' : rows for packages with package_size == 8
-    Columns: student_id, student_name, cefr, group_name, lesson_days, package_id, package_size, payment_status, first_lesson_date, L1..L8
+    Export dashboard to an Excel file filtered by:
+      - tab: 'all' | '4' | '8'
+      - group: optional group_name to filter
+      - day: optional day number '0'..'6' to filter students by lesson days
     """
+    # parse filters
+    tab = tab or "all"
+    group = group.strip()
+    day_num = None
+    if day != "":
+        try:
+            day_num = int(day)
+            if day_num < 0 or day_num > 6:
+                day_num = None
+        except Exception:
+            day_num = None
+
     wb = openpyxl.Workbook()
-    # Remove default sheet that is created
+    # remove default sheet
     default = wb.active
     wb.remove(default)
+
+    # single-sheet behavior:
+    # - tab == "4" -> sheet "4-lesson" with only 4-lesson packages
+    # - tab == "8" -> sheet "8-lesson" with only 8-lesson packages
+    # - tab == "all" -> sheet "All" with all packages
+
+    if tab == "4":
+        sheet_name = "4-lesson"
+        target_sizes = [4]
+    elif tab == "8":
+        sheet_name = "8-lesson"
+        target_sizes = [8]
+    else:
+        sheet_name = "All"
+        target_sizes = [4, 8]
 
     headers = [
         "student_id", "student_name", "cefr", "group_name", "lesson_days",
@@ -130,55 +162,62 @@ def export_dashboard_xlsx(db: Session = Depends(get_db)):
         "L1","L2","L3","L4","L5","L6","L7","L8"
     ]
 
-    # helper to write a sheet for a given package_size
-    def write_sheet(sheet_name: str, target_size: int):
-        ws = wb.create_sheet(title=sheet_name)
-        ws.append(headers)
-        students = db.query(models.Student).order_by(models.Student.name).all()
-        for s in students:
-            lesson_days = f"{s.lesson_day_1}" + (f", {s.lesson_day_2}" if s.lesson_day_2 is not None else "")
-            packages = s.packages or []
-            for pkg in packages:
-                if int(pkg.package_size) != target_size:
-                    continue
-                lessons_map = {l.lesson_number: l.lesson_date.isoformat() for l in (pkg.lessons or [])}
-                row = [
-                    s.student_id,
-                    s.name,
-                    s.cefr,
-                    s.group_name,
-                    lesson_days,
-                    pkg.package_id,
-                    pkg.package_size,
-                    "Paid" if pkg.payment_status else "Unpaid",
-                    pkg.first_lesson_date.isoformat() if pkg.first_lesson_date else ""
-                ]
-                for i in range(1, 9):
-                    row.append(lessons_map.get(i, ""))
-                ws.append(row)
+    ws = wb.create_sheet(title=sheet_name)
+    ws.append(headers)
 
-        # auto-adjust column widths
-        for col in ws.columns:
-            max_len = 0
-            col_letter = get_column_letter(col[0].column)
-            for cell in col:
-                if cell.value:
-                    vlen = len(str(cell.value))
-                    if vlen > max_len:
-                        max_len = vlen
-            ws.column_dimensions[col_letter].width = min(max_len + 2, 50)
+    students = db.query(models.Student).order_by(models.Student.name).all()
+    for s in students:
+        # apply student-level filters (group & day)
+        if group and (s.group_name or "") != group:
+            continue
+        if day_num is not None:
+            d1 = int(s.lesson_day_1)
+            d2 = s.lesson_day_2 if s.lesson_day_2 is not None else None
+            if d1 != day_num and d2 != day_num:
+                continue
 
-    # write sheets
-    write_sheet("4-lesson", 4)
-    write_sheet("8-lesson", 8)
+        lesson_days = f"{s.lesson_day_1}" + (f", {s.lesson_day_2}" if s.lesson_day_2 is not None else "")
+        pkgs = s.packages or []
+        for pkg in pkgs:
+            if int(pkg.package_size) not in target_sizes:
+                continue
+            lessons_map = {l.lesson_number: l.lesson_date.isoformat() for l in (pkg.lessons or [])}
+            row = [
+                s.student_id,
+                s.name,
+                s.cefr,
+                s.group_name,
+                lesson_days,
+                pkg.package_id,
+                pkg.package_size,
+                "Paid" if pkg.payment_status else "Unpaid",
+                pkg.first_lesson_date.isoformat() if pkg.first_lesson_date else ""
+            ]
+            for i in range(1, 9):
+                row.append(lessons_map.get(i, ""))
+            ws.append(row)
+
+    # if no rows were appended (possible), ensure sheet still has headers (done) and optionally a note row
+    # auto-adjust column widths
+    for col in ws.columns:
+        max_len = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col:
+            if cell.value:
+                l = len(str(cell.value))
+                if l > max_len: max_len = l
+        ws.column_dimensions[col_letter].width = min(max_len + 2, 50)
 
     stream = io.BytesIO()
     wb.save(stream)
     stream.seek(0)
 
-    filename = "tuition_dashboard_by_package.xlsx"
-    return StreamingResponse(stream, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                             headers={"Content-Disposition": f"attachment; filename={filename}"})
+    filename = f"tuition_dashboard_{sheet_name}.xlsx"
+    return StreamingResponse(
+        stream,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
     
 # Edit a single lesson (date and/or manual override flag)
 class LessonEditPayload(BaseModel):

@@ -103,15 +103,24 @@ export default function DashboardGrid() {
 
   const exportExcel = async () => {
     try {
-      const res = await api.get("/export/dashboard.xlsx", { responseType: "blob" });
-      const url = window.URL.createObjectURL(new Blob([res.data]));
+      // build query params
+      const params = new URLSearchParams();
+      params.append("tab", tab); // "all" | "4" | "8"
+      if (groupFilter && groupFilter !== "all") params.append("group", groupFilter);
+      if (dayFilter && dayFilter !== "all") params.append("day", dayFilter);
+
+      const url = `/export/dashboard.xlsx?${params.toString()}`;
+      const res = await api.get(url, { responseType: "blob" });
+      const blobUrl = window.URL.createObjectURL(new Blob([res.data]));
       const a = document.createElement("a");
-      a.href = url;
-      a.download = "tuition_dashboard.xlsx";
+      a.href = blobUrl;
+      // choose filename based on tab
+      const fileSuffix = tab === "4" ? "4-lesson" : tab === "8" ? "8-lesson" : "all";
+      a.download = `tuition_dashboard_${fileSuffix}.xlsx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      window.URL.revokeObjectURL(url);
+      window.URL.revokeObjectURL(blobUrl);
     } catch (err: any) {
       console.error("Export failed", err);
       alert("Export failed: " + (err?.response?.data?.detail || err?.message || ""));
