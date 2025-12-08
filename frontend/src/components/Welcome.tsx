@@ -11,6 +11,9 @@ export default function Welcome() {
       >
         Click here to continue
       </Link>
+      <Link to="/closures" className="mt-4 px-6 py-3 bg-gray-600 text-white rounded text-lg shadow hover:bg-gray-700 transition">
+        Manage Closures
+      </Link>
     </div>
   );
 }

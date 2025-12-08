@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from .. import schemas, models, crud
 from ..db import get_db
 from datetime import date
-
+from fastapi import Query
 
 router = APIRouter(prefix="/packages", tags=["Packages"])
 extra_router = APIRouter(tags=["Packages"])
@@ -35,6 +35,8 @@ def regenerate_lessons(package_id: int, db: Session = Depends(get_db)):
 
     crud.regenerate_package(db, pkg)
     return {"status": "ok", "package_id": package_id}
+
+
 # --------------------------------------------------------
 # GET ONE PACKAGE
 # --------------------------------------------------------
