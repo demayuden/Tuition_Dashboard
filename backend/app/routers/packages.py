@@ -5,6 +5,7 @@ from .. import schemas, models, crud
 from ..db import get_db
 from datetime import date
 from fastapi import Query
+from typing import Optional
 
 router = APIRouter(prefix="/packages", tags=["Packages"])
 extra_router = APIRouter(tags=["Packages"])
@@ -36,7 +37,43 @@ def regenerate_lessons(package_id: int, db: Session = Depends(get_db)):
     crud.regenerate_package(db, pkg)
     return {"status": "ok", "package_id": package_id}
 
+# Edit a single lesson (date and/or manual override flag)
+class LessonEditPayload(BaseModel):
+    lesson_date: Optional[date] = None
+    is_manual_override: Optional[bool] = None
 
+@extra_router.patch("/lessons/{lesson_id}", response_model=schemas.LessonOut)
+def edit_lesson(lesson_id: int, payload: LessonEditPayload, db: Session = Depends(get_db)):
+    """
+    Edit a lesson's date and/or toggle manual override.
+    - lesson_date : YYYY-MM-DD (optional)
+    - is_manual_override : true/false (optional)
+    """
+    lesson = db.query(models.Lesson).filter(models.Lesson.lesson_id == lesson_id).first()
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+
+    data = payload.dict(exclude_unset=True)
+    if "lesson_date" in data:
+        lesson.lesson_date = data["lesson_date"]
+    if "is_manual_override" in data:
+        lesson.is_manual_override = bool(data["is_manual_override"])
+
+    # commit and refresh
+    db.commit()
+    db.refresh(lesson)
+
+    # If we changed dates we might want to update package.first_lesson_date
+    # Recompute first_lesson_date for the package if needed.
+    pkg = db.query(models.Package).filter(models.Package.package_id == lesson.package_id).first()
+    if pkg:
+        first = db.query(models.Lesson).filter(models.Lesson.package_id == pkg.package_id).order_by(models.Lesson.lesson_number).first()
+        if first:
+            pkg.first_lesson_date = first.lesson_date
+            db.commit()
+            db.refresh(pkg)
+
+    return lesson
 # --------------------------------------------------------
 # GET ONE PACKAGE
 # --------------------------------------------------------
@@ -69,7 +106,60 @@ def mark_unpaid(package_id: int, db: Session = Depends(get_db)):
     updated = crud.toggle_payment(db, pkg, False)
     return {"status": "ok", "package_id": updated.package_id, "payment_status": updated.payment_status}
 
+@extra_router.post("/students/{student_id}/packages", response_model=schemas.PackageOut)
+def create_extra_package(student_id: int, package_size: int = Query(4, ge=1, le=8), db: Session = Depends(get_db)):
+    """
+    Create an additional package for an existing student.
+    - package_size: 4 or 8 (defaults to 4)
+    """
+    # fetch student
+    student = db.query(models.Student).filter(models.Student.student_id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
 
+    # create package record
+    pkg = models.Package(
+        student_id=student_id,
+        package_size=package_size,
+        payment_status=False
+    )
+    db.add(pkg)
+    db.commit()
+    db.refresh(pkg)
+
+    # generate lessons using scheduler (if available)
+    try:
+        from ..services.scheduler import generate_lessons_for_package
+    except Exception:
+        generate_lessons_for_package = None
+
+    if generate_lessons_for_package:
+        # generate Lesson objects (function returns Lesson-like objects)
+        lessons = generate_lessons_for_package(db, student, pkg, override_existing=False)
+
+        for l in lessons:
+            # if scheduler returned ORM Lesson objects they may already be attached; handle both cases
+            if getattr(l, "lesson_id", None) is None:
+                lesson = models.Lesson(
+                    package_id=pkg.package_id,
+                    lesson_number=l.lesson_number,
+                    lesson_date=l.lesson_date,
+                    is_first=getattr(l, "is_first", False),
+                    is_manual_override=getattr(l, "is_manual_override", False)
+                )
+                db.add(lesson)
+            else:
+                # already an ORM object (manual preserved) — ensure it's merged
+                db.merge(l)
+
+    # update package.first_lesson_date from actual lessons persisted
+    first = db.query(models.Lesson).filter(models.Lesson.package_id == pkg.package_id).order_by(models.Lesson.lesson_number).first()
+    if first:
+        pkg.first_lesson_date = first.lesson_date
+
+    db.commit()
+    db.refresh(pkg)
+    return pkg
 # --------------------------------------------------------
 # REGENERATE LESSON DATES (skip closures, recalc)
 # --------------------------------------------------------

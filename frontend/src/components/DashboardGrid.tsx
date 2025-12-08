@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import api from "../api/client";
 import CreateStudentForm from "./CreateStudentForm";
 import EditStudentModal from "./EditStudentModal";
+import EditLessonModal from "./EditLessonModal";
 
 type Lesson = { lesson_id:number, lesson_number:number, lesson_date:string, is_first:boolean, is_manual_override?:boolean };
 type PackageType = { package_id:number, package_size:number, payment_status:boolean, lessons:Lesson[] };
@@ -11,6 +12,8 @@ export default function DashboardGrid() {
   const [loading, setLoading] = useState(false);
   const [editingStudent, setEditingStudent] = useState<any | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [editingLesson, setEditingLesson] = useState<any | null>(null);
+  const [lessonModalOpen, setLessonModalOpen] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -50,6 +53,16 @@ export default function DashboardGrid() {
       }
     }
   };
+  const createPackage = async (studentId: number, size: number) => {
+  try {
+    await api.post(`/students/${studentId}/packages?package_size=${size}`);
+    await load(); // refresh list after creation
+    alert(`Created ${size}-lesson package`);
+  } catch (err:any) {
+    console.error("createPackage error", err);
+    alert("Create package failed: " + (err?.response?.data?.detail || err?.message || ""));
+  }
+};
 
   return (
     <div className="p-6">
@@ -90,10 +103,32 @@ export default function DashboardGrid() {
                   <td className="border px-2">{s.package_size}</td>
 
                   {Array.from({ length: 8 }).map((_, idx) => {
-                    const lesson = lessons.find((l:any) => l.lesson_number === idx+1);
-                    const color = lesson?.is_first && pkg && !pkg.payment_status ? "text-red-600 font-semibold" : "";
-                    return <td key={idx} className={`border px-2 ${color}`}>{lesson ? lesson.lesson_date : ""}</td>;
-                  })}
+                  const lesson = lessons.find((l:any) => l.lesson_number === idx+1);
+                  const isManual = !!lesson?.is_manual_override;
+                  const color = lesson?.is_first && pkg && !pkg.payment_status ? "text-red-600 font-semibold" : "";
+                  return (
+                    <td
+                      key={idx}
+                      className={`border px-2 ${color} ${lesson ? "cursor-pointer hover:bg-gray-50" : ""} relative`}
+                      onClick={() => {
+                        if (lesson) {
+                          setEditingLesson(lesson);
+                          setLessonModalOpen(true);
+                        }
+                      }}
+                      title={lesson ? (isManual ? "Manual override — preserved on regenerate" : `Lesson date: ${lesson.lesson_date}`) : ""}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>{lesson ? lesson.lesson_date : ""}</div>
+                        {isManual && (
+                          <div className="ml-2 text-xs px-1 py-[2px] rounded bg-yellow-100 text-yellow-800 border border-yellow-200" style={{ lineHeight: 1 }}>
+                            M
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                  );
+                })}
 
                   <td className="border px-2">{pkg ? (pkg.payment_status ? "Paid" : "Unpaid") : ""}</td>
 
@@ -114,6 +149,11 @@ export default function DashboardGrid() {
                     >
                       Edit
                     </button>
+                    
+                    {/* Add Package buttons */}
+                    <button onClick={() => createPackage(s.student_id, 4)} className="ml-2 px-2 py-1 text-sm border rounded">Add 4</button>
+                    <button onClick={() => createPackage(s.student_id, 8)} className="ml-2 px-2 py-1 text-sm border rounded">Add 8</button>
+
                   </td>
                 </tr>
               );
@@ -127,6 +167,12 @@ export default function DashboardGrid() {
         open={editOpen}
         onClose={() => { setEditOpen(false); setEditingStudent(null); }}
         student={editingStudent}
+        onSaved={() => load()}
+      />
+      <EditLessonModal
+        open={lessonModalOpen}
+        onClose={() => { setLessonModalOpen(false); setEditingLesson(null); }}
+        lesson={editingLesson}
         onSaved={() => load()}
       />
     </div>
