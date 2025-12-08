@@ -1,11 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from .. import schemas, models, crud
 from ..db import get_db
 from datetime import date
-from fastapi import Query
 from typing import Optional, List, Dict
+import openpyxl
+from fastapi.responses import StreamingResponse
+import io
 
 router = APIRouter(prefix="/packages", tags=["Packages"])
 extra_router = APIRouter(tags=["Packages"])
@@ -108,6 +110,70 @@ def regenerate_preview_get(package_id: int, db: Session = Depends(get_db)):
 
     return {"preview": True, "package_id": package_id, "proposed_lessons": out}
 
+@extra_router.get("/export/dashboard.xlsx")
+def export_dashboard_xlsx(db: Session = Depends(get_db)):
+    """
+    Export dashboard to an Excel file:
+    Columns: Student, CEFR, Group, LessonDays, PackageID, PackageSize, Paid, L1..L8
+    One row per package (if student has multiple packages).
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Dashboard"
+
+    headers = [
+        "student_id", "student_name", "cefr", "group_name", "lesson_days",
+        "package_id", "package_size", "payment_status", "first_lesson_date",
+        "L1","L2","L3","L4","L5","L6","L7","L8"
+    ]
+    ws.append(headers)
+
+    students = db.query(models.Student).order_by(models.Student.name).all()
+    for s in students:
+        lesson_days = f"{s.lesson_day_1}" + (f", {s.lesson_day_2}" if s.lesson_day_2 is not None else "")
+        packages = s.packages or []
+        if not packages:
+            row = [s.student_id, s.name, s.cefr, s.group_name, lesson_days, "", "", "", ""]
+            row.extend([""] * 8)
+            ws.append(row)
+            continue
+
+        for pkg in packages:
+            lessons_map = {l.lesson_number: l.lesson_date.isoformat() for l in (pkg.lessons or [])}
+            row = [
+                s.student_id,
+                s.name,
+                s.cefr,
+                s.group_name,
+                lesson_days,
+                pkg.package_id,
+                pkg.package_size,
+                "Paid" if pkg.payment_status else "Unpaid",
+                pkg.first_lesson_date.isoformat() if pkg.first_lesson_date else ""
+            ]
+            for i in range(1, 9):
+                row.append(lessons_map.get(i, ""))
+            ws.append(row)
+
+    # Auto-adjust column widths (brief)
+    for col in ws.columns:
+        max_len = 0
+        col_letter = openpyxl.utils.get_column_letter(col[0].column)
+        for cell in col:
+            if cell.value:
+                l = len(str(cell.value))
+                if l > max_len:
+                    max_len = l
+        ws.column_dimensions[col_letter].width = min(max_len + 2, 50)
+
+    stream = io.BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+
+    filename = "tuition_dashboard.xlsx"
+    return StreamingResponse(stream, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": f"attachment; filename={filename}"})
+    
 # Edit a single lesson (date and/or manual override flag)
 class LessonEditPayload(BaseModel):
     lesson_date: Optional[date] = None
