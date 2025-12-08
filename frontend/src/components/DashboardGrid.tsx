@@ -3,6 +3,7 @@ import api from "../api/client";
 import CreateStudentForm from "./CreateStudentForm";
 import EditStudentModal from "./EditStudentModal";
 import EditLessonModal from "./EditLessonModal";
+import RegeneratePreviewModal from "./RegeneratePreviewModal";
 
 type Lesson = { lesson_id:number, lesson_number:number, lesson_date:string, is_first:boolean, is_manual_override?:boolean };
 type PackageType = { package_id:number, package_size:number, payment_status:boolean, lessons:Lesson[] };
@@ -14,6 +15,10 @@ export default function DashboardGrid() {
   const [editOpen, setEditOpen] = useState(false);
   const [editingLesson, setEditingLesson] = useState<any | null>(null);
   const [lessonModalOpen, setLessonModalOpen] = useState(false);
+  const [previewPkgId, setPreviewPkgId] = useState<number | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewCurrentLessons, setPreviewCurrentLessons] = useState<any[]>([]);
+
 
   const load = async () => {
     setLoading(true);
@@ -63,6 +68,20 @@ export default function DashboardGrid() {
     alert("Create package failed: " + (err?.response?.data?.detail || err?.message || ""));
   }
 };
+  const openPreview = (pkg: any) => {
+    if (!pkg) return;
+    // prepare current lessons array from pkg.lessons
+    const current = (pkg.lessons ?? []).map((l:any) => ({
+      lesson_number: l.lesson_number,
+      lesson_date: l.lesson_date,
+      is_manual_override: l.is_manual_override,
+      is_first: l.is_first
+    }));
+    setPreviewCurrentLessons(current);
+    setPreviewPkgId(pkg.package_id);
+    setPreviewOpen(true);
+  };
+
 
   return (
     <div className="p-6">
@@ -138,7 +157,7 @@ export default function DashboardGrid() {
                         <button onClick={() => togglePayment(pkg.package_id, !pkg.payment_status)} className="px-2 py-1 text-sm bg-indigo-600 text-white rounded">
                           {pkg.payment_status ? "Mark Unpaid" : "Mark Paid"}
                         </button>
-                        <button onClick={() => regenerate(pkg.package_id)} className="px-2 py-1 text-sm border rounded">Regenerate</button>
+                        <button onClick={() => openPreview(pkg)} className="px-2 py-1 text-sm border rounded">Regenerate</button>
                       </>
                     )}
 
@@ -174,6 +193,13 @@ export default function DashboardGrid() {
         onClose={() => { setLessonModalOpen(false); setEditingLesson(null); }}
         lesson={editingLesson}
         onSaved={() => load()}
+      />
+      <RegeneratePreviewModal
+        open={previewOpen}
+        onClose={() => { setPreviewOpen(false); setPreviewPkgId(null); setPreviewCurrentLessons([]); }}
+        packageId={previewPkgId}
+        currentLessons={previewCurrentLessons}
+        onCommitted={() => { load(); }}
       />
     </div>
   );

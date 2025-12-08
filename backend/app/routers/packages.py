@@ -5,7 +5,7 @@ from .. import schemas, models, crud
 from ..db import get_db
 from datetime import date
 from fastapi import Query
-from typing import Optional
+from typing import Optional, List, Dict
 
 router = APIRouter(prefix="/packages", tags=["Packages"])
 extra_router = APIRouter(tags=["Packages"])
@@ -29,13 +29,84 @@ def mark_unpaid(package_id: int, db: Session = Depends(get_db)):
 
 
 @extra_router.post("/students/packages/{package_id}/regenerate")
-def regenerate_lessons(package_id: int, db: Session = Depends(get_db)):
+def regenerate_lessons(package_id: int, preview: bool = Query(False), db: Session = Depends(get_db)):
+    """
+    Regenerate lesson dates for a package.
+
+    Query param:
+      preview=true  -> returns proposed lesson dates (no DB changes)
+      preview=false -> performs regeneration and persists changes (existing behavior)
+
+    Response shape for preview:
+    {
+      "preview": true,
+      "package_id": 123,
+      "proposed_lessons": [
+        {"lesson_number":1, "lesson_date":"2026-01-12", "is_manual_override":false, "is_first": true},
+        ...
+      ]
+    }
+    """
     pkg = crud.get_package(db, package_id)
     if not pkg:
         raise HTTPException(status_code=404, detail="Package not found")
 
+    # If user asked for a preview, call the scheduler directly and return the results (no DB writes)
+    if preview:
+        # ensure we can import the scheduler generator
+        try:
+            from ..services.scheduler import generate_lessons_for_package
+        except Exception:
+            raise HTTPException(status_code=500, detail="Scheduler not available")
+
+        student = pkg.student
+        # Call scheduler - it uses db for closures but does not commit anything here.
+        proposed = generate_lessons_for_package(db, student, pkg, override_existing=False)
+
+        # Normalize to safe JSON-friendly structure
+        out: List[Dict] = []
+        for l in proposed:
+            out.append({
+                "lesson_number": getattr(l, "lesson_number", None),
+                "lesson_date": getattr(l, "lesson_date").isoformat() if getattr(l, "lesson_date", None) else None,
+                "is_manual_override": bool(getattr(l, "is_manual_override", False)),
+                "is_first": bool(getattr(l, "is_first", False)),
+            })
+
+        return {"preview": True, "package_id": package_id, "proposed_lessons": out}
+
+    # Otherwise perform the real regeneration (existing behavior)
     crud.regenerate_package(db, pkg)
-    return {"status": "ok", "package_id": package_id}
+    return {"status": "ok", "message": "Regenerated", "package_id": package_id}
+
+@extra_router.get("/students/packages/{package_id}/regenerate")
+def regenerate_preview_get(package_id: int, db: Session = Depends(get_db)):
+    """
+    GET preview for regenerate (no DB changes).
+    Returns proposed lesson dates for the package without persisting them.
+    """
+    pkg = crud.get_package(db, package_id)
+    if not pkg:
+        raise HTTPException(status_code=404, detail="Package not found")
+
+    try:
+        from ..services.scheduler import generate_lessons_for_package
+    except Exception:
+        raise HTTPException(status_code=500, detail="Scheduler not available")
+
+    student = pkg.student
+    proposed = generate_lessons_for_package(db, student, pkg, override_existing=False)
+
+    out: List[Dict] = []
+    for l in proposed:
+        out.append({
+            "lesson_number": getattr(l, "lesson_number", None),
+            "lesson_date": getattr(l, "lesson_date").isoformat() if getattr(l, "lesson_date", None) else None,
+            "is_manual_override": bool(getattr(l, "is_manual_override", False)),
+            "is_first": bool(getattr(l, "is_first", False)),
+        })
+
+    return {"preview": True, "package_id": package_id, "proposed_lessons": out}
 
 # Edit a single lesson (date and/or manual override flag)
 class LessonEditPayload(BaseModel):
