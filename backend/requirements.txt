@@ -1,3 +1,7 @@
+# from project root
+pip freeze > backend/requirements.txt
+# or manually create with the core deps:
+cat > backend/requirements.txt <<'EOF'
 fastapi
 uvicorn[standard]
 SQLAlchemy>=1.4
@@ -12,3 +16,4 @@ celery[redis]
 redis
 httpx
 pydantic-settings
+EOF
