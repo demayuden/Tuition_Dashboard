@@ -119,11 +119,19 @@ def export_dashboard_xlsx(
     db: Session = Depends(get_db)
 ):
     """
-    Export dashboard to an Excel file filtered by:
-      - tab: 'all' | '4' | '8'
-      - group: optional group_name to filter
-      - day: optional day number '0'..'6' to filter students by lesson days
+    Export improved student-level dashboard view.
+    - tab = "4" or "8" => one row per student showing the FIRST package of that size
+    - tab = "all" => single sheet "All" that includes first package for each student (if any)
+    Filters: group (group_name), day (0..6)
     """
+
+    # Optional alias map: edit to override names in the final exported sheet.
+    # Example: {"Original Full Name": "Alias Name", "Brenda Lim": "B. Lim"}
+    ALIASES = {
+        # "Full Original Name": "Alias To Use",
+        # "Dema Yuden": "Dema Y.",
+    }
+
     # parse filters
     tab = tab or "all"
     group = group.strip()
@@ -136,38 +144,50 @@ def export_dashboard_xlsx(
         except Exception:
             day_num = None
 
+    # choose sheet and column count
+    if tab == "4":
+        sheet_name = "4-lesson"
+        target_sizes = [4]
+        lesson_count = 4
+    elif tab == "8":
+        sheet_name = "8-lesson"
+        target_sizes = [8]
+        lesson_count = 8
+    else:
+        sheet_name = "All"
+        target_sizes = [4, 8]
+        # For "All" we'll show up to 8 columns (keeps format consistent).
+        lesson_count = 8
+
     wb = openpyxl.Workbook()
     # remove default sheet
     default = wb.active
     wb.remove(default)
 
-    # single-sheet behavior:
-    # - tab == "4" -> sheet "4-lesson" with only 4-lesson packages
-    # - tab == "8" -> sheet "8-lesson" with only 8-lesson packages
-    # - tab == "all" -> sheet "All" with all packages
-
-    if tab == "4":
-        sheet_name = "4-lesson"
-        target_sizes = [4]
-    elif tab == "8":
-        sheet_name = "8-lesson"
-        target_sizes = [8]
-    else:
-        sheet_name = "All"
-        target_sizes = [4, 8]
-
     headers = [
-        "student_id", "student_name", "cefr", "group_name", "lesson_days",
-        "package_id", "package_size", "payment_status", "first_lesson_date",
-        "L1","L2","L3","L4","L5","L6","L7","L8"
+        "Name", "CEFR", "Group", "Day", 
     ]
+    # add L1..Ln headers based on lesson_count
+    headers += [f"L{i}" for i in range(1, lesson_count + 1)]
 
+    # create sheet
     ws = wb.create_sheet(title=sheet_name)
     ws.append(headers)
 
+    # helper to convert day numbers to labels
+    def day_label_for_student(s):
+        d1 = s.lesson_day_1
+        d2 = s.lesson_day_2
+        if d2 is None or d2 == "" or d1 == d2:
+            return ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][int(d1)]
+        else:
+            return f"{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][int(d1)]} & {['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][int(d2)]}"
+
     students = db.query(models.Student).order_by(models.Student.name).all()
+
+    rows_written = 0
     for s in students:
-        # apply student-level filters (group & day)
+        # apply student-level filters
         if group and (s.group_name or "") != group:
             continue
         if day_num is not None:
@@ -176,42 +196,70 @@ def export_dashboard_xlsx(
             if d1 != day_num and d2 != day_num:
                 continue
 
-        lesson_days = f"{s.lesson_day_1}" + (f", {s.lesson_day_2}" if s.lesson_day_2 is not None else "")
+        # find the first package for this student matching target_sizes
         pkgs = s.packages or []
+        chosen_pkg = None
         for pkg in pkgs:
-            if int(pkg.package_size) not in target_sizes:
-                continue
-            lessons_map = {l.lesson_number: l.lesson_date.isoformat() for l in (pkg.lessons or [])}
-            row = [
-                s.student_id,
-                s.name,
-                s.cefr,
-                s.group_name,
-                lesson_days,
-                pkg.package_id,
-                pkg.package_size,
-                "Paid" if pkg.payment_status else "Unpaid",
-                pkg.first_lesson_date.isoformat() if pkg.first_lesson_date else ""
-            ]
-            for i in range(1, 9):
-                row.append(lessons_map.get(i, ""))
-            ws.append(row)
+            if int(pkg.package_size) in target_sizes:
+                chosen_pkg = pkg
+                break
 
-    # if no rows were appended (possible), ensure sheet still has headers (done) and optionally a note row
-    # auto-adjust column widths
+        # if no matching package found, skip (we want one row per student that has a package)
+        if not chosen_pkg:
+            continue
+
+        # build lesson map (lesson_number -> iso date)
+        lessons_map = {l.lesson_number: (l.lesson_date.isoformat() if l.lesson_date else "") for l in (chosen_pkg.lessons or [])}
+
+        # name (apply alias if present)
+        name_to_use = ALIASES.get(s.name, None)
+        if not name_to_use:
+            # default alias: try to shorten "First Last" -> "First Last" (no change).
+            # If you want custom aliases, add them to ALIASES dict above.
+            name_to_use = s.name
+
+        lesson_days_label = day_label_for_student(s)
+
+        # assemble row values
+        row_vals = [
+            name_to_use,
+            s.cefr or "",
+            s.group_name or "",
+            lesson_days_label
+        ]
+        for i in range(1, lesson_count + 1):
+            row_vals.append(lessons_map.get(i, ""))
+
+        ws.append(row_vals)
+        rows_written += 1
+
+        # apply red/bold style to the first lesson cell if the package is unpaid
+        if not chosen_pkg.payment_status:
+            # first lesson column index (1-based): Name=1, CEFR=2, Group=3, Day=4 -> L1 at 5
+            first_lesson_col = 5
+            first_cell = ws.cell(row=ws.max_row, column=first_lesson_col)
+            if first_cell.value:
+                first_cell.font = Font(color="FF0000", bold=True)
+
+    # If no rows written, optionally add a note row
+    if rows_written == 0:
+        ws.append(["No matching students/packages for the selected filters."])
+
+    # Auto-adjust column widths
     for col in ws.columns:
         max_len = 0
         col_letter = get_column_letter(col[0].column)
         for cell in col:
             if cell.value:
-                l = len(str(cell.value))
-                if l > max_len: max_len = l
-        ws.column_dimensions[col_letter].width = min(max_len + 2, 50)
+                vlen = len(str(cell.value))
+                if vlen > max_len:
+                    max_len = vlen
+        ws.column_dimensions[col_letter].width = min(max_len + 4, 50)
 
+    # stream back
     stream = io.BytesIO()
     wb.save(stream)
     stream.seek(0)
-
     filename = f"tuition_dashboard_{sheet_name}.xlsx"
     return StreamingResponse(
         stream,
