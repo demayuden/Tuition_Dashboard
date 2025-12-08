@@ -10,7 +10,7 @@ type PackageType = { package_id: number, package_size: number, payment_status: b
 
 export default function DashboardGrid() {
   const [students, setStudents] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [, setLoading] = useState(false);
 
   // UI state: modals
   const [editingStudent, setEditingStudent] = useState<any | null>(null);
@@ -58,33 +58,6 @@ export default function DashboardGrid() {
     } catch (e) {
       console.error("togglePayment error", e);
       alert("Toggle payment failed");
-    }
-  };
-
-  const regenerate = async (pkgId: number) => {
-    if (!confirm("Regenerate lessons for this package? This will overwrite non-manual lessons.")) return;
-    try {
-      await api.post(`/students/packages/${pkgId}/regenerate`);
-      await load();
-      alert("Regenerated");
-    } catch (e: any) {
-      console.error("regenerate error", e);
-      if (e?.response?.status === 404) {
-        alert("Regenerate endpoint not found on backend. Add /students/packages/{id}/regenerate route.");
-      } else {
-        alert("Regeneration failed");
-      }
-    }
-  };
-
-  const createPackage = async (studentId: number, size: number) => {
-    try {
-      await api.post(`/students/${studentId}/packages?package_size=${size}`);
-      await load();
-      alert(`Created ${size}-lesson package`);
-    } catch (err: any) {
-      console.error("createPackage error", err);
-      alert("Create package failed: " + (err?.response?.data?.detail || err?.message || ""));
     }
   };
 
