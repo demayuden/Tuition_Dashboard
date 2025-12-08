@@ -34,8 +34,13 @@ export default function CreateStudentForm({ onCreated }: Props) {
       onCreated?.();
       alert("Student created");
     } catch (err: any) {
-      console.error(err);
-      alert("Create failed: " + (err?.response?.data?.detail || err.message));
+      console.error("CREATE STUDENT ERROR (full):", err);
+      // axios provides .response, .request, .message
+      console.error("err.message:", err.message);
+      console.error("err.code:", err.code);
+      console.error("err.response:", err?.response);
+      console.error("err.request:", err?.request);
+      alert("Create failed: " + (err?.response?.data?.detail || err.message || JSON.stringify(err)));
     }
   };
 

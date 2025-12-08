@@ -1,13 +1,13 @@
+# backend/app/schemas.py
 from pydantic import BaseModel
-from datetime import date
+from datetime import date, datetime
 from typing import List, Optional
-from datetime import datetime
 
 # --------------------------------------------
 # Lesson Schema
 # --------------------------------------------
 class LessonOut(BaseModel):
-    id: int
+    lesson_id: int
     lesson_number: int
     lesson_date: date
     is_first: bool
@@ -21,9 +21,10 @@ class LessonOut(BaseModel):
 # Package Schema
 # --------------------------------------------
 class PackageOut(BaseModel):
-    id: int
+    package_id: int
     package_size: int
     payment_status: bool
+    first_lesson_date: Optional[date]
     created_at: Optional[datetime]
     lessons: List[LessonOut] = []
 
@@ -35,7 +36,7 @@ class PackageOut(BaseModel):
 # Student Schema
 # --------------------------------------------
 class StudentOut(BaseModel):
-    id: int
+    student_id: int
     name: str
     cefr: Optional[str]
     group_name: Optional[str]
@@ -59,7 +60,6 @@ class StudentCreate(BaseModel):
     cefr: Optional[str] = None
     group_name: Optional[str] = None
     lesson_day_1: int
-    lesson_day_2: Optional[int] = None  # <-- make optional properly
+    lesson_day_2: Optional[int] = None
     package_size: int
     start_date: date
-

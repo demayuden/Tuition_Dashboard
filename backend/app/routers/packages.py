@@ -1,12 +1,38 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-
+from pydantic import BaseModel
 from .. import schemas, models, crud
 from ..db import get_db
 
 router = APIRouter(prefix="/packages", tags=["Packages"])
+extra_router = APIRouter(tags=["Packages"])
+
+@extra_router.post("/students/packages/{package_id}/mark_paid")
+def mark_paid(package_id: int, db: Session = Depends(get_db)):
+    pkg = crud.get_package(db, package_id)
+    if not pkg:
+        raise HTTPException(status_code=404, detail="Package not found")
+    updated = crud.toggle_payment(db, pkg, True)
+    return {"status": "ok", "payment_status": updated.payment_status}
 
 
+@extra_router.post("/students/packages/{package_id}/mark_unpaid")
+def mark_unpaid(package_id: int, db: Session = Depends(get_db)):
+    pkg = crud.get_package(db, package_id)
+    if not pkg:
+        raise HTTPException(status_code=404, detail="Package not found")
+    updated = crud.toggle_payment(db, pkg, False)
+    return {"status": "ok", "payment_status": updated.payment_status}
+
+
+@extra_router.post("/students/packages/{package_id}/regenerate")
+def regenerate_lessons(package_id: int, db: Session = Depends(get_db)):
+    pkg = crud.get_package(db, package_id)
+    if not pkg:
+        raise HTTPException(status_code=404, detail="Package not found")
+
+    crud.regenerate_package(db, pkg)
+    return {"status": "ok", "package_id": package_id}
 # --------------------------------------------------------
 # GET ONE PACKAGE
 # --------------------------------------------------------
@@ -21,33 +47,35 @@ def get_package(package_id: int, db: Session = Depends(get_db)):
 # --------------------------------------------------------
 # TOGGLE PAYMENT STATUS
 # --------------------------------------------------------
-@router.post("/{package_id}/payment")
-def toggle_payment_status(package_id: int, paid: bool, db: Session = Depends(get_db)):
+class PaymentToggle(BaseModel):
+    paid: bool
+
+@router.post("/students/packages/{package_id}/mark_paid")
+def mark_paid(package_id: int, db: Session = Depends(get_db)):
     pkg = crud.get_package(db, package_id)
     if not pkg:
         raise HTTPException(status_code=404, detail="Package not found")
+    updated = crud.toggle_payment(db, pkg, True)
+    return {"status": "ok", "package_id": updated.package_id, "payment_status": updated.payment_status}
 
-    updated = crud.toggle_payment(db, pkg, paid)
-    return {
-        "status": "ok",
-        "package_id": updated.id,
-        "payment_status": updated.payment_status
-    }
+@router.post("/students/packages/{package_id}/mark_unpaid")
+def mark_unpaid(package_id: int, db: Session = Depends(get_db)):
+    pkg = crud.get_package(db, package_id)
+    if not pkg:
+        raise HTTPException(status_code=404, detail="Package not found")
+    updated = crud.toggle_payment(db, pkg, False)
+    return {"status": "ok", "package_id": updated.package_id, "payment_status": updated.payment_status}
 
 
 # --------------------------------------------------------
 # REGENERATE LESSON DATES (skip closures, recalc)
 # --------------------------------------------------------
-@router.post("/{package_id}/regenerate")
-def regenerate_package(package_id: int, db: Session = Depends(get_db)):
+
+@router.post("/students/packages/{package_id}/regenerate")
+def regenerate_lessons(package_id: int, db: Session = Depends(get_db)):
     pkg = crud.get_package(db, package_id)
     if not pkg:
         raise HTTPException(status_code=404, detail="Package not found")
 
     crud.regenerate_package(db, pkg)
-
-    return {
-        "status": "ok",
-        "message": "Lessons regenerated successfully",
-        "package_id": pkg.id
-    }
+    return {"status": "ok", "message": "Regenerated", "package_id": package_id}

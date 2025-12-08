@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
+from .routers.packages import extra_router
 from .db import Base, engine
 from .routers import students, packages
 
@@ -9,36 +9,31 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Tuition Lesson Dashboard API")
 
-# --------------------------------------------------------
-# CORS SETTINGS
-# Allow frontend (React) to access backend
-# --------------------------------------------------------
-# CORS SETTINGS
-from fastapi.middleware.cors import CORSMiddleware
-
-# allow both common dev ports (5173, 5174) and 127.0.0.1 forms
-# CORS SETTINGS
 origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://localhost:5174",
     "http://127.0.0.1:5174",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "*"   # optional — allow all during dev
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,         # or ["*"] for dev
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 print("DEBUG: CORS middleware installed with allow_origins=['*']")
 # --------------------------------------------------------
 # ROUTES
 # --------------------------------------------------------
 app.include_router(students.router)
 app.include_router(packages.router)
-
+app.include_router(extra_router)
 
 # --------------------------------------------------------
 # ROOT ENDPOINT (for testing)

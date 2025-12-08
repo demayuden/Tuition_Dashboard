@@ -100,10 +100,10 @@ export default function DashboardGrid() {
                   <td className="border px-2 space-x-2">
                     {pkg && (
                       <>
-                        <button onClick={() => togglePayment(pkg.id, !pkg.payment_status)} className="px-2 py-1 text-sm bg-indigo-600 text-white rounded">
+                        <button onClick={() => togglePayment(pkg.package_id, !pkg.payment_status)} className="px-2 py-1 text-sm bg-indigo-600 text-white rounded">
                           {pkg.payment_status ? "Mark Unpaid" : "Mark Paid"}
                         </button>
-                        <button onClick={() => regenerate(pkg.id)} className="px-2 py-1 text-sm border rounded">Regenerate</button>
+                        <button onClick={() => regenerate(pkg.package_id)} className="px-2 py-1 text-sm border rounded">Regenerate</button>
                       </>
                     )}
                   </td>

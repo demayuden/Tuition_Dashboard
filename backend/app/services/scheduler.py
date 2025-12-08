@@ -11,9 +11,6 @@ def _daterange(start: date, end: date):
         d += timedelta(days=1)
 
 def load_closure_dates(db: Session) -> Set[date]:
-    """
-    Load all closure date ranges from DB and return a set of blocked dates.
-    """
     blocked: Set[date] = set()
     for c in db.query(Closure).all():
         for d in _daterange(c.start_date, c.end_date):
@@ -21,14 +18,9 @@ def load_closure_dates(db: Session) -> Set[date]:
     return blocked
 
 def next_dates_for_days(start_from: date, days_of_week: List[int], needed: int, blocked: Set[date]) -> List[date]:
-    """
-    Generate `needed` dates starting at or after start_from that fall on weekdays in `days_of_week`.
-    days_of_week values: 0=Mon .. 6=Sun
-    Skips any dates present in `blocked`.
-    """
     results: List[date] = []
     cur = start_from
-    limit_date = start_from + timedelta(days=365*2)  # safety horizon
+    limit_date = start_from + timedelta(days=365*2)
     while len(results) < needed and cur <= limit_date:
         if cur.weekday() in days_of_week and cur not in blocked:
             results.append(cur)
@@ -36,12 +28,6 @@ def next_dates_for_days(start_from: date, days_of_week: List[int], needed: int, 
     return results
 
 def generate_lessons_for_package(db: Session, student: Student, pkg: Package, override_existing: bool = False) -> List[Lesson]:
-    """
-    Generate Lesson objects for `pkg` using `student` schedule.
-    - If override_existing is True: delete non-manual lessons for this package before generation.
-    - Preserves lessons with is_manual_override=True (they are merged into the sequence).
-    - Returns a list of Lesson objects (some may be existing DB objects; ensure you add/merge and commit outside).
-    """
     blocked = load_closure_dates(db)
 
     # Decide which weekdays to use
@@ -54,34 +40,29 @@ def generate_lessons_for_package(db: Session, student: Student, pkg: Package, ov
 
     # Optionally remove old non-manual lessons
     if override_existing:
-        db.query(Lesson).filter(Lesson.package_id == pkg.id, Lesson.is_manual_override == False).delete(synchronize_session=False)
+        db.query(Lesson).filter(Lesson.package_id == pkg.package_id, Lesson.is_manual_override == False).delete(synchronize_session=False)
         db.flush()
 
     # Load manual lessons to preserve them (ordered by date)
-    manual_lessons = db.query(Lesson).filter(Lesson.package_id == pkg.id, Lesson.is_manual_override == True).order_by(Lesson.lesson_date).all()
+    manual_lessons = db.query(Lesson).filter(Lesson.package_id == pkg.package_id, Lesson.is_manual_override == True).order_by(Lesson.lesson_date).all()
     manual_dates = {l.lesson_date: l for l in manual_lessons}
     manual_count = len(manual_lessons)
 
     needed = pkg.package_size - manual_count
     if needed <= 0:
-        # All lessons are manual already
-        # Ensure lesson numbers are assigned sequentially to manual lessons
         for idx, l in enumerate(sorted(manual_lessons, key=lambda x: x.lesson_date), start=1):
             l.lesson_number = idx
-        # mark first
         if manual_lessons:
             first = sorted(manual_lessons, key=lambda x: x.lesson_date)[0]
             first.is_first = True
             pkg.first_lesson_date = first.lesson_date
         return manual_lessons
 
-    # Generate candidate dates (get a bit extra to handle manual overlaps)
     candidates = next_dates_for_days(start_date, days, needed + 20, blocked)
 
-    lessons: List[Lesson] = []
+    lessons = []
     lesson_number = 1
     i = 0
-    # Merge manual lessons into generated sequence by date
     while len(lessons) + manual_count < pkg.package_size and i < len(candidates):
         cand = candidates[i]
         if cand in manual_dates:
@@ -89,21 +70,19 @@ def generate_lessons_for_package(db: Session, student: Student, pkg: Package, ov
             preserved.lesson_number = lesson_number
             lessons.append(preserved)
         else:
-            new = Lesson(package_id=pkg.id, lesson_number=lesson_number, lesson_date=cand, is_first=False, is_manual_override=False)
+            new = Lesson(package_id=pkg.package_id, lesson_number=lesson_number, lesson_date=cand, is_first=False, is_manual_override=False)
             lessons.append(new)
         lesson_number += 1
         i += 1
 
-    # If generated list shorter than required (rare due to horizon), fill by continuing search
     cur = candidates[-1] + timedelta(days=1) if candidates else start_date
     while len(lessons) + manual_count < pkg.package_size and cur <= start_date + timedelta(days=365*2):
         if cur.weekday() in days and cur not in blocked and cur not in manual_dates:
-            new = Lesson(package_id=pkg.id, lesson_number=lesson_number, lesson_date=cur, is_first=False, is_manual_override=False)
+            new = Lesson(package_id=pkg.package_id, lesson_number=lesson_number, lesson_date=cur, is_first=False, is_manual_override=False)
             lessons.append(new)
             lesson_number += 1
         cur += timedelta(days=1)
 
-    # Ensure first lesson is marked and convenience field set on package
     if lessons:
         lessons_sorted = sorted(lessons, key=lambda l: l.lesson_number)
         lessons_sorted[0].is_first = True
