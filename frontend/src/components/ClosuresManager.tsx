@@ -66,6 +66,15 @@ export default function ClosuresManager() {
 
   return (
     <div className="p-6">
+      {/* Back Button */}
+      <div className="mb-4">
+        <button
+          onClick={() => window.location.href = "/"}
+          className="flex items-center text-blue-600 hover:text-blue-800"
+        >
+          <span className="text-4xl mr-2">←</span> 
+        </button>
+      </div>
       <h2 className="text-xl font-semibold mb-3">Closures (Holidays / Breaks)</h2>
 
       <form onSubmit={create} className="mb-4 grid grid-cols-4 gap-2 items-end">

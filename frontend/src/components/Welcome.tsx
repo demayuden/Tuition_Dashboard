@@ -9,10 +9,10 @@ export default function Welcome() {
         to="/dashboard"
         className="px-6 py-3 bg-blue-600 text-white rounded text-lg shadow hover:bg-blue-700 transition"
       >
-        Click here to continue
+        Click here to view the Tuition Dashboard
       </Link>
       <Link to="/closures" className="mt-4 px-6 py-3 bg-gray-600 text-white rounded text-lg shadow hover:bg-gray-700 transition">
-        Manage Closures
+        Click here to Manage Closures
       </Link>
     </div>
   );

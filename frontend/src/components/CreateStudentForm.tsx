@@ -48,7 +48,7 @@ export default function CreateStudentForm({ onCreated }: Props) {
     <form onSubmit={submit} className="p-4 border rounded bg-white mb-4">
       <div className="grid grid-cols-2 gap-2">
         <input required placeholder="Name" value={name} onChange={e=>setName(e.target.value)} className="p-2 border" />
-        <input placeholder="CEFR (e.g. A2)" value={cefr} onChange={e=>setCefr(e.target.value)} className="p-2 border" />
+        <input placeholder="CEFR" value={cefr} onChange={e=>setCefr(e.target.value)} className="p-2 border" />
         <input placeholder="Group" value={groupName} onChange={e=>setGroupName(e.target.value)} className="p-2 border" />
         <select value={lessonDay1} onChange={e=>setLessonDay1(Number(e.target.value))} className="p-2 border">
           <option value={0}>Mon</option>

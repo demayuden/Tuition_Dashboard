@@ -185,7 +185,16 @@ export default function DashboardGrid() {
 
   return (
     <div className="p-6">
-      {/* Header + actions */}
+      {/* Back Button */}
+      <div className="mb-4">
+        <button
+          onClick={() => window.location.href = "/"}
+          className="flex items-center text-blue-600 hover:text-blue-800"
+        >
+          <span className="text-4xl mr-2">←</span>
+        </button>
+      </div>
+
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-semibold">Tuition Dashboard</h1>
         <div className="flex gap-2 items-center">
@@ -302,24 +311,28 @@ export default function DashboardGrid() {
                   <td className="border px-2 space-x-2">
                     {pkg && (
                       <>
-                        <button onClick={() => togglePayment(pkg.package_id, !pkg.payment_status)} className="px-2 py-1 text-sm bg-indigo-600 text-white rounded">
+                        <button
+                          onClick={() => togglePayment(pkg.package_id, !pkg.payment_status)}
+                          className="px-2 py-1 text-sm bg-indigo-600 text-white rounded"
+                        >
                           {pkg.payment_status ? "Mark Unpaid" : "Mark Paid"}
                         </button>
-                        <button onClick={() => openPreview(pkg)} className="px-2 py-1 text-sm border rounded">Regenerate</button>
+                        <button
+                          onClick={() => openPreview(pkg)}
+                          className="px-2 py-1 text-sm border rounded"
+                        >
+                          Regenerate
+                        </button>
                       </>
                     )}
 
                     {row.isFirstForStudent && (
-                      <button onClick={() => { setEditingStudent(s); setEditOpen(true); }} className="ml-2 px-2 py-1 text-sm border rounded">
+                      <button
+                        onClick={() => { setEditingStudent(s); setEditOpen(true); }}
+                        className="ml-2 px-2 py-1 text-sm border rounded"
+                      >
                         Edit
                       </button>
-                    )}
-
-                    {row.isFirstForStudent && (
-                      <>
-                        <button onClick={() => createPackage(s.student_id, 4)} className="ml-2 px-2 py-1 text-sm border rounded">Add 4</button>
-                        <button onClick={() => createPackage(s.student_id, 8)} className="ml-2 px-2 py-1 text-sm border rounded">Add 8</button>
-                      </>
                     )}
                   </td>
                 </tr>
