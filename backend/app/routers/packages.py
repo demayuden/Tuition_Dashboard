@@ -8,6 +8,7 @@ from typing import Optional, List, Dict
 import openpyxl
 from fastapi.responses import StreamingResponse
 import io
+from openpyxl.utils import get_column_letter
 
 router = APIRouter(prefix="/packages", tags=["Packages"])
 extra_router = APIRouter(tags=["Packages"])
@@ -113,64 +114,69 @@ def regenerate_preview_get(package_id: int, db: Session = Depends(get_db)):
 @extra_router.get("/export/dashboard.xlsx")
 def export_dashboard_xlsx(db: Session = Depends(get_db)):
     """
-    Export dashboard to an Excel file:
-    Columns: Student, CEFR, Group, LessonDays, PackageID, PackageSize, Paid, L1..L8
-    One row per package (if student has multiple packages).
+    Export dashboard to an Excel file with two sheets:
+      - '4-lesson' : rows for packages with package_size == 4
+      - '8-lesson' : rows for packages with package_size == 8
+    Columns: student_id, student_name, cefr, group_name, lesson_days, package_id, package_size, payment_status, first_lesson_date, L1..L8
     """
     wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Dashboard"
+    # Remove default sheet that is created
+    default = wb.active
+    wb.remove(default)
 
     headers = [
         "student_id", "student_name", "cefr", "group_name", "lesson_days",
         "package_id", "package_size", "payment_status", "first_lesson_date",
         "L1","L2","L3","L4","L5","L6","L7","L8"
     ]
-    ws.append(headers)
 
-    students = db.query(models.Student).order_by(models.Student.name).all()
-    for s in students:
-        lesson_days = f"{s.lesson_day_1}" + (f", {s.lesson_day_2}" if s.lesson_day_2 is not None else "")
-        packages = s.packages or []
-        if not packages:
-            row = [s.student_id, s.name, s.cefr, s.group_name, lesson_days, "", "", "", ""]
-            row.extend([""] * 8)
-            ws.append(row)
-            continue
+    # helper to write a sheet for a given package_size
+    def write_sheet(sheet_name: str, target_size: int):
+        ws = wb.create_sheet(title=sheet_name)
+        ws.append(headers)
+        students = db.query(models.Student).order_by(models.Student.name).all()
+        for s in students:
+            lesson_days = f"{s.lesson_day_1}" + (f", {s.lesson_day_2}" if s.lesson_day_2 is not None else "")
+            packages = s.packages or []
+            for pkg in packages:
+                if int(pkg.package_size) != target_size:
+                    continue
+                lessons_map = {l.lesson_number: l.lesson_date.isoformat() for l in (pkg.lessons or [])}
+                row = [
+                    s.student_id,
+                    s.name,
+                    s.cefr,
+                    s.group_name,
+                    lesson_days,
+                    pkg.package_id,
+                    pkg.package_size,
+                    "Paid" if pkg.payment_status else "Unpaid",
+                    pkg.first_lesson_date.isoformat() if pkg.first_lesson_date else ""
+                ]
+                for i in range(1, 9):
+                    row.append(lessons_map.get(i, ""))
+                ws.append(row)
 
-        for pkg in packages:
-            lessons_map = {l.lesson_number: l.lesson_date.isoformat() for l in (pkg.lessons or [])}
-            row = [
-                s.student_id,
-                s.name,
-                s.cefr,
-                s.group_name,
-                lesson_days,
-                pkg.package_id,
-                pkg.package_size,
-                "Paid" if pkg.payment_status else "Unpaid",
-                pkg.first_lesson_date.isoformat() if pkg.first_lesson_date else ""
-            ]
-            for i in range(1, 9):
-                row.append(lessons_map.get(i, ""))
-            ws.append(row)
+        # auto-adjust column widths
+        for col in ws.columns:
+            max_len = 0
+            col_letter = get_column_letter(col[0].column)
+            for cell in col:
+                if cell.value:
+                    vlen = len(str(cell.value))
+                    if vlen > max_len:
+                        max_len = vlen
+            ws.column_dimensions[col_letter].width = min(max_len + 2, 50)
 
-    # Auto-adjust column widths (brief)
-    for col in ws.columns:
-        max_len = 0
-        col_letter = openpyxl.utils.get_column_letter(col[0].column)
-        for cell in col:
-            if cell.value:
-                l = len(str(cell.value))
-                if l > max_len:
-                    max_len = l
-        ws.column_dimensions[col_letter].width = min(max_len + 2, 50)
+    # write sheets
+    write_sheet("4-lesson", 4)
+    write_sheet("8-lesson", 8)
 
     stream = io.BytesIO()
     wb.save(stream)
     stream.seek(0)
 
-    filename = "tuition_dashboard.xlsx"
+    filename = "tuition_dashboard_by_package.xlsx"
     return StreamingResponse(stream, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                              headers={"Content-Disposition": f"attachment; filename={filename}"})
     
