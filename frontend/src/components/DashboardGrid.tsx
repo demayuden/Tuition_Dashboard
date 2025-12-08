@@ -198,7 +198,13 @@ export default function DashboardGrid() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-semibold">Tuition Dashboard</h1>
         <div className="flex gap-2 items-center">
-          <button onClick={exportExcel} className="px-3 py-2 bg-blue-600 text-white rounded">Export Excel</button>
+          <button
+            onClick={exportExcel}
+            className="px-3 py-2 bg-blue-600 text-white rounded
+                      hover:bg-blue-700 hover:scale-[1.03] transition-all"
+          >
+            Export Excel
+          </button>
         </div>
       </div>
 

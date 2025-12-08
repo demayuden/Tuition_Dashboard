@@ -96,11 +96,24 @@ export default function ClosuresManager() {
         </div>
 
         <div className="col-span-4 mt-2">
-          <button type="submit" className="px-3 py-2 bg-green-600 text-white rounded mr-2">Add Closure</button>
-          <button type="button" onClick={() => { setStartDate(""); setEndDate(""); setReason(""); setCtype(""); }} className="px-3 py-2 border rounded">Clear</button>
+          <button
+            type="submit"
+            className="px-3 py-2 bg-green-600 text-white rounded mr-2 
+                      hover:bg-green-700 hover:scale-[1.03] transition-all"
+          >
+            Add Closure
+          </button>
+
+          <button
+            type="button"
+            onClick={() => { setStartDate(""); setEndDate(""); setReason(""); setCtype(""); }}
+            className="px-3 py-2 border rounded
+                      hover:bg-gray-100 hover:scale-[1.03] transition-all"
+          >
+            Clear
+          </button>
         </div>
       </form>
-
       <div className="mb-2 text-sm text-gray-600">Status: {loading ? "loading…" : `Loaded ${closures.length}`}</div>
 
       <div className="bg-white border rounded overflow-auto">

@@ -77,8 +77,22 @@ export default function CreateStudentForm({ onCreated }: Props) {
       </div>
 
       <div className="mt-3 flex gap-2">
-        <button type="submit" className="px-3 py-2 bg-blue-600 text-white rounded">Create student</button>
-        <button type="button" onClick={clear} className="px-3 py-2 border rounded">Clear</button>
+        <button
+          type="submit"
+          className="px-3 py-2 bg-blue-600 text-white rounded
+                    hover:bg-blue-700 hover:scale-[1.03] transition-all"
+        >
+          Create student
+        </button>
+
+        <button
+          type="button"
+          onClick={clear}
+          className="px-3 py-2 border rounded 
+                    hover:bg-gray-100 hover:scale-[1.03] transition-all"
+        >
+          Clear
+        </button>
       </div>
     </form>
   );
