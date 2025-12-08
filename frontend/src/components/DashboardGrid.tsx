@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
 import api from "../api/client";
 import CreateStudentForm from "./CreateStudentForm";
+import EditStudentModal from "./EditStudentModal";
 
-type Lesson = { id:number, lesson_number:number, lesson_date:string, is_first:boolean, is_manual_override?:boolean };
-type PackageType = { id:number, package_size:number, payment_status:boolean, lessons:Lesson[] };
+type Lesson = { lesson_id:number, lesson_number:number, lesson_date:string, is_first:boolean, is_manual_override?:boolean };
+type PackageType = { package_id:number, package_size:number, payment_status:boolean, lessons:Lesson[] };
 
 export default function DashboardGrid() {
   const [students, setStudents] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [editingStudent, setEditingStudent] = useState<any | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -19,13 +22,11 @@ export default function DashboardGrid() {
 
   useEffect(() => { load(); }, []);
 
-   const togglePayment = async (pkgId:number, paid:boolean) => {
+  const togglePayment = async (pkgId:number, paid:boolean) => {
     try {
-      // Backend exposes mark_paid / mark_unpaid under /students/packages/{id}
       const url = paid
         ? `/students/packages/${pkgId}/mark_paid`
         : `/students/packages/${pkgId}/mark_unpaid`;
-
       await api.post(url);
       await load(); // refresh list
     } catch (e) {
@@ -37,14 +38,11 @@ export default function DashboardGrid() {
   const regenerate = async (pkgId:number) => {
     if (!confirm("Regenerate lessons for this package? This will overwrite non-manual lessons.")) return;
     try {
-      // If your backend has regenerate endpoint at /students/packages/{id}/regenerate
-      // otherwise create it in backend or call the proper path.
       await api.post(`/students/packages/${pkgId}/regenerate`);
       await load();
       alert("Regenerated");
-    } catch (e) {
+    } catch (e:any) {
       console.error("regenerate error", e);
-      // helpful message if backend endpoint missing
       if (e?.response?.status === 404) {
         alert("Regenerate endpoint not found on backend. Add /students/packages/{id}/regenerate route.");
       } else {
@@ -77,10 +75,12 @@ export default function DashboardGrid() {
           </thead>
           <tbody>
             {students.map(s => {
+              // BE CAREFUL: backend returns student.student_id, packages[].package_id etc.
+              const studentKey = s.student_id ?? s.id;
               const pkg:PackageType | undefined = s.packages?.[0];
               const lessons = pkg?.lessons ?? [];
               return (
-                <tr key={s.id}>
+                <tr key={studentKey}>
                   <td className="border px-2">{s.name}</td>
                   <td className="border px-2">{s.cefr}</td>
                   <td className="border px-2">{s.group_name}</td>
@@ -106,6 +106,14 @@ export default function DashboardGrid() {
                         <button onClick={() => regenerate(pkg.package_id)} className="px-2 py-1 text-sm border rounded">Regenerate</button>
                       </>
                     )}
+
+                    {/* EDIT button (opens modal) */}
+                    <button
+                      onClick={() => { setEditingStudent(s); setEditOpen(true); }}
+                      className="ml-2 px-2 py-1 text-sm border rounded"
+                    >
+                      Edit
+                    </button>
                   </td>
                 </tr>
               );
@@ -113,6 +121,14 @@ export default function DashboardGrid() {
           </tbody>
         </table>
       </div>
+
+      {/* Edit modal */}
+      <EditStudentModal
+        open={editOpen}
+        onClose={() => { setEditOpen(false); setEditingStudent(null); }}
+        student={editingStudent}
+        onSaved={() => load()}
+      />
     </div>
   );
 }

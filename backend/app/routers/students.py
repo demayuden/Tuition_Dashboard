@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
-
+from fastapi import Body
 from .. import schemas, models, crud
 from ..db import get_db
 
@@ -29,3 +29,35 @@ def get_student(student_id: int, db: Session = Depends(get_db)):
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
     return student
+
+# PATCH /students/{student_id} - update one or more fields on a student
+@router.patch("/{student_id}", response_model=schemas.StudentOut)
+def update_student(student_id: int, payload: schemas.StudentUpdate, db: Session = Depends(get_db)):
+    student = crud.get_student(db, student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # apply only provided fields
+    updateable = {
+        "name", "cefr", "group_name", "lesson_day_1", "lesson_day_2",
+        "package_size", "start_date", "status"
+    }
+
+    data = payload.dict(exclude_unset=True)
+    for key, value in data.items():
+        # field names in DB model match the schema field names
+        if key in updateable:
+            setattr(student, key, value)
+
+    db.commit()
+    db.refresh(student)
+    return student
+
+
+@router.delete("/{student_id}")
+def delete_student(student_id:int, db:Session=Depends(get_db)):
+    student = crud.get_student(db, student_id)
+    if not student: raise HTTPException(404,"Student not found")
+    db.delete(student)
+    db.commit()
+    return {"status":"ok"}

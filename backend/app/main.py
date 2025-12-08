@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .routers.packages import extra_router
 from .db import Base, engine
-from .routers import students, packages
+from .routers import students, packages, closures
 
 # Create DB tables (DEV ONLY — disable in production, use Alembic instead)
 Base.metadata.create_all(bind=engine)
@@ -34,6 +34,7 @@ print("DEBUG: CORS middleware installed with allow_origins=['*']")
 app.include_router(students.router)
 app.include_router(packages.router)
 app.include_router(extra_router)
+app.include_router(closures.router)
 
 # --------------------------------------------------------
 # ROOT ENDPOINT (for testing)

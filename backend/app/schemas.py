@@ -63,3 +63,13 @@ class StudentCreate(BaseModel):
     lesson_day_2: Optional[int] = None
     package_size: int
     start_date: date
+
+class StudentUpdate(BaseModel):
+    name: Optional[str] = None
+    cefr: Optional[str] = None
+    group_name: Optional[str] = None
+    lesson_day_1: Optional[int] = None
+    lesson_day_2: Optional[int] = None
+    package_size: Optional[int] = None
+    start_date: Optional[date] = None
+    status: Optional[str] = None
