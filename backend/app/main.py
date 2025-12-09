@@ -4,6 +4,8 @@ from .routers.packages import extra_router
 from .db import Base, engine
 from .routers import students, packages, closures
 from .routers.closures import router as closures_router
+from app.db import Base, engine
+from app import models
 
 # Create DB tables (DEV ONLY — disable in production, use Alembic instead)
 Base.metadata.create_all(bind=engine)

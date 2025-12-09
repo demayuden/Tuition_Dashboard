@@ -1,36 +1,35 @@
 # backend/app/db.py
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
+from urllib.parse import urlparse, parse_qs
 from .config import settings
-from urllib.parse import urlparse
 
 DATABASE_URL = settings.DATABASE_URL
 
-# detect whether the URL requires SSL (supabase / ?sslmode=require)
-_use_ssl = False
-try:
-    parsed = urlparse(DATABASE_URL)
-    # either explicit sslmode in query or remote host like supabase
-    if "sslmode=require" in (parsed.query or ""):
-        _use_ssl = True
-    elif parsed.hostname and "supabase.co" in parsed.hostname:
-        _use_ssl = True
-except Exception:
-    _use_ssl = False
+def _should_use_ssl(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+        q = parse_qs(parsed.query or "")
+        if "sslmode" in q and any(v and v[0].lower() == "require" for v in q.values()):
+            return True
+        host = (parsed.hostname or "").lower()
+        if "supabase.co" in host or "neon.tech" in host or "neon.aws" in host or "railway" in host:
+            return True
+    except Exception:
+        pass
+    return False
 
-if _use_ssl:
-    engine = create_engine(
-        DATABASE_URL,
-        echo=settings.DEBUG,
-        future=True,
-        connect_args={"sslmode": "require"}
-    )
-else:
-    engine = create_engine(
-        DATABASE_URL,
-        echo=settings.DEBUG,
-        future=True
-    )
+_connect_args = {}
+if _should_use_ssl(DATABASE_URL):
+    _connect_args = {"sslmode": "require"}
+
+# ALWAYS pass a dict (empty or with sslmode) — do NOT pass None
+engine = create_engine(
+    DATABASE_URL,
+    echo=settings.DEBUG,
+    future=True,
+    connect_args=_connect_args
+)
 
 SessionLocal = sessionmaker(
     bind=engine,
