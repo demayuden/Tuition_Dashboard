@@ -1,16 +1,37 @@
+# backend/app/db.py
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from .config import settings
+from urllib.parse import urlparse
 
-# SQLAlchemy engine (connects to Postgres via DATABASE_URL)
-engine = create_engine(
-    settings.DATABASE_URL,
-    echo=settings.DEBUG,   # prints SQL queries when DEBUG=True
-    future=True,
-    connect_args={"sslmode": "require"}
-)
+DATABASE_URL = settings.DATABASE_URL
 
-# SessionLocal is used in routes to interact with DB
+# detect whether the URL requires SSL (supabase / ?sslmode=require)
+_use_ssl = False
+try:
+    parsed = urlparse(DATABASE_URL)
+    # either explicit sslmode in query or remote host like supabase
+    if "sslmode=require" in (parsed.query or ""):
+        _use_ssl = True
+    elif parsed.hostname and "supabase.co" in parsed.hostname:
+        _use_ssl = True
+except Exception:
+    _use_ssl = False
+
+if _use_ssl:
+    engine = create_engine(
+        DATABASE_URL,
+        echo=settings.DEBUG,
+        future=True,
+        connect_args={"sslmode": "require"}
+    )
+else:
+    engine = create_engine(
+        DATABASE_URL,
+        echo=settings.DEBUG,
+        future=True
+    )
+
 SessionLocal = sessionmaker(
     bind=engine,
     autoflush=False,
@@ -18,10 +39,8 @@ SessionLocal = sessionmaker(
     future=True
 )
 
-# Base class for all ORM models
 Base = declarative_base()
 
-# Dependency for FastAPI routes
 def get_db():
     db = SessionLocal()
     try:
