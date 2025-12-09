@@ -1,6 +1,4 @@
 // src/components/ConfirmModal.tsx
-import React from "react";
-
 type ConfirmModalProps = {
   open: boolean;
   title?: string;
