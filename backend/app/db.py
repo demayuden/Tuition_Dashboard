@@ -6,8 +6,7 @@ from .config import settings
 engine = create_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,   # prints SQL queries when DEBUG=True
-    future=True,
-    connect_args={"sslmode": "require"}
+    future=True
 )
 
 # SessionLocal is used in routes to interact with DB
