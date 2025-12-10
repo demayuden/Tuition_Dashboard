@@ -68,3 +68,29 @@ def delete_closure(closure_id: int, db: Session = Depends(get_db)):
     db.delete(c)
     db.commit()
     return {"status": "ok", "id": closure_id}
+
+@router.patch("/{closure_id}", response_model=ClosureOut)
+def update_closure(closure_id: int, payload: ClosureIn, db: Session = Depends(get_db)):
+    """
+    Update an existing closure.
+    Allows modifying start_date, end_date, reason, and type.
+    Full replace semantics (same fields as create). You can change this to partial if you prefer.
+    """
+    c = db.query(models.Closure).filter(models.Closure.id == closure_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Closure not found")
+
+    # Validate
+    if payload.start_date > payload.end_date:
+        raise HTTPException(status_code=400, detail="start_date must be <= end_date")
+
+    # Update fields
+    c.start_date = payload.start_date
+    c.end_date = payload.end_date
+    c.reason = payload.reason
+    c.type = payload.type
+
+    db.commit()
+    db.refresh(c)
+
+    return ClosureOut(id=c.id, start_date=c.start_date, end_date=c.end_date, reason=c.reason, type=c.type)
