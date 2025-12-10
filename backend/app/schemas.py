@@ -44,6 +44,7 @@ class StudentOut(BaseModel):
     lesson_day_2: Optional[int]
     package_size: int
     start_date: date
+    end_date: Optional[date]  
     status: str
 
     packages: List[PackageOut] = []
@@ -63,6 +64,7 @@ class StudentCreate(BaseModel):
     lesson_day_2: Optional[int] = None
     package_size: int
     start_date: date
+    end_date: Optional[date] = None  
 
 class StudentUpdate(BaseModel):
     name: Optional[str] = None
@@ -72,4 +74,5 @@ class StudentUpdate(BaseModel):
     lesson_day_2: Optional[int] = None
     package_size: Optional[int] = None
     start_date: Optional[date] = None
+    end_date: Optional[date] = None  
     status: Optional[str] = None

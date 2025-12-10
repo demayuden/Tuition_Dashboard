@@ -40,7 +40,7 @@ def update_student(student_id: int, payload: schemas.StudentUpdate, db: Session 
     # apply only provided fields
     updateable = {
         "name", "cefr", "group_name", "lesson_day_1", "lesson_day_2",
-        "package_size", "start_date", "status"
+        "package_size", "start_date", "end_date", "status"
     }
 
     data = payload.dict(exclude_unset=True)

@@ -17,6 +17,7 @@ class Student(Base):
 
     package_size = Column("package_size", Integer, nullable=False)  # 4 or 8
     start_date = Column("start_date", Date, nullable=False)
+    end_date = Column("end_date", Date, nullable=True)
 
     status = Column("status", String, default="active")
 
