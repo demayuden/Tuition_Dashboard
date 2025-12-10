@@ -300,9 +300,10 @@ export default function ClosuresManager() {
     <div className="bg-white rounded-lg shadow-lg p-6 w-[380px]">
       <h2 className="text-xl font-semibold mb-3">Delete Closure?</h2>
       <p className="text-gray-700 mb-6">
-        Are you sure you want to delete this closure?
+        Are you sure you want to delete this closure? 
         <br />
         <span className="font-medium">{closureToDelete?.start_date} → {closureToDelete?.end_date}</span>
+        <p>This action cannot be undone.</p>
       </p>
 
       <div className="flex justify-end gap-3">
