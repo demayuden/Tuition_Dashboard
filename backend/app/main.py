@@ -10,7 +10,7 @@ from app import models
 # Create DB tables (DEV ONLY — disable in production, use Alembic instead)
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Tuition Lesson Dashboard API")
+app = FastAPI(title="Tuition Lesson Dashboard API", redirect_slashes=False)
 
 origins = [
     "http://localhost:5173",

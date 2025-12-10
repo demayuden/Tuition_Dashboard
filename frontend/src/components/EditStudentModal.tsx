@@ -17,6 +17,7 @@ export default function EditStudentModal({ open, onClose, student, onSaved }: Pr
   const [lessonDay2, setLessonDay2] = useState<number | "">("");
   const [packageSize, setPackageSize] = useState<number>(4);
   const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>(""); // NEW
 
   useEffect(() => {
     if (student) {
@@ -27,6 +28,7 @@ export default function EditStudentModal({ open, onClose, student, onSaved }: Pr
       setLessonDay2(student.lesson_day_2 ?? "");
       setPackageSize(student.package_size ?? 4);
       setStartDate(student.start_date ?? "");
+      setEndDate(student.end_date ?? ""); // NEW
     }
   }, [student]);
 
@@ -42,8 +44,9 @@ export default function EditStudentModal({ open, onClose, student, onSaved }: Pr
         package_size: Number(packageSize),
         start_date: startDate || undefined,
       };
-      // explicitly allow clearing lesson_day_2
       payload.lesson_day_2 = lessonDay2 === "" ? null : Number(lessonDay2);
+      // explicitly include end_date; allow clearing by sending null
+      payload.end_date = endDate === "" ? null : endDate;
 
       await api.patch(`/students/${student.student_id}`, payload);
       onSaved?.();
@@ -81,6 +84,7 @@ export default function EditStudentModal({ open, onClose, student, onSaved }: Pr
           </select>
 
           <input className="p-2 border" type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} />
+          <input className="p-2 border" type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} /> {/* NEW */}
         </div>
 
         <div className="mt-4 flex justify-end gap-2">

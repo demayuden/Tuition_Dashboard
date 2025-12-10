@@ -56,29 +56,56 @@ def regenerate_lessons(package_id: int, preview: bool = Query(False), db: Sessio
         raise HTTPException(status_code=404, detail="Package not found")
 
     # If user asked for a preview, call the scheduler directly and return the results (no DB writes)
+    # Normalize proposed lessons: compute lesson_number by chronological order
     if preview:
-        # ensure we can import the scheduler generator
         try:
             from ..services.scheduler import generate_lessons_for_package
         except Exception:
             raise HTTPException(status_code=500, detail="Scheduler not available")
 
         student = pkg.student
-        # Call scheduler - it uses db for closures but does not commit anything here.
         proposed = generate_lessons_for_package(db, student, pkg, override_existing=False)
 
-        # Normalize to safe JSON-friendly structure
-        out: List[Dict] = []
+        # convert to plain items, ensure each has a date and is_manual flag
+        flat = []
         for l in proposed:
-            out.append({
-                "lesson_number": getattr(l, "lesson_number", None),
-                "lesson_date": getattr(l, "lesson_date").isoformat() if getattr(l, "lesson_date", None) else None,
-                "is_manual_override": bool(getattr(l, "is_manual_override", False)),
-                "is_first": bool(getattr(l, "is_first", False)),
+            ld = getattr(l, "lesson_date", None)
+            flat.append({
+                "lesson_date": ld.isoformat() if ld is not None else None,
+                "is_manual_override": bool(getattr(l, "is_manual_override", False))
             })
 
-        return {"preview": True, "package_id": package_id, "proposed_lessons": out}
+        # assign lesson_number by chronological order (1..N)
+        # filter out items without dates (should not happen) and sort by date
+        dated = [f for f in flat if f["lesson_date"]]
+        dated_sorted = sorted(dated, key=lambda x: x["lesson_date"])
+        for idx, item in enumerate(dated_sorted, start=1):
+            item["lesson_number"] = idx
 
+        # if you want to preserve ordering of output exactly as lesson_number 1..N, return dated_sorted
+        # but to be safe return a fixed-length list with None for missing positions up to package_size:
+        out = []
+        # create index map
+        num_map = {i["lesson_number"]: i for i in dated_sorted}
+        for n in range(1, pkg.package_size + 1):
+            it = num_map.get(n)
+            if it:
+                out.append({
+                    "lesson_number": n,
+                    "lesson_date": it["lesson_date"],
+                    "is_manual_override": it["is_manual_override"],
+                    "is_first": (n == 1)
+                })
+            else:
+                out.append({
+                    "lesson_number": n,
+                    "lesson_date": None,
+                    "is_manual_override": False,
+                    "is_first": (n == 1)
+                })
+
+        return {"preview": True, "package_id": package_id, "proposed_lessons": out}
+    
     # Otherwise perform the real regeneration (existing behavior)
     crud.regenerate_package(db, pkg)
     return {"status": "ok", "message": "Regenerated", "package_id": package_id}
@@ -101,14 +128,40 @@ def regenerate_preview_get(package_id: int, db: Session = Depends(get_db)):
     student = pkg.student
     proposed = generate_lessons_for_package(db, student, pkg, override_existing=False)
 
-    out: List[Dict] = []
+    # convert to plain items, ensure each has a date and is_manual flag
+    flat = []
     for l in proposed:
-        out.append({
-            "lesson_number": getattr(l, "lesson_number", None),
-            "lesson_date": getattr(l, "lesson_date").isoformat() if getattr(l, "lesson_date", None) else None,
-            "is_manual_override": bool(getattr(l, "is_manual_override", False)),
-            "is_first": bool(getattr(l, "is_first", False)),
+        ld = getattr(l, "lesson_date", None)
+        flat.append({
+            "lesson_date": ld.isoformat() if ld is not None else None,
+            "is_manual_override": bool(getattr(l, "is_manual_override", False))
         })
+
+    # assign lesson_number by chronological order (1..N)
+    dated = [f for f in flat if f["lesson_date"]]
+    dated_sorted = sorted(dated, key=lambda x: x["lesson_date"])
+    for idx, item in enumerate(dated_sorted, start=1):
+        item["lesson_number"] = idx
+
+    # produce fixed-length list of size package_size, filling missing slots with nulls
+    out = []
+    num_map = {i["lesson_number"]: i for i in dated_sorted}
+    for n in range(1, pkg.package_size + 1):
+        it = num_map.get(n)
+        if it:
+            out.append({
+                "lesson_number": n,
+                "lesson_date": it["lesson_date"],
+                "is_manual_override": it["is_manual_override"],
+                "is_first": (n == 1)
+            })
+        else:
+            out.append({
+                "lesson_number": n,
+                "lesson_date": None,
+                "is_manual_override": False,
+                "is_first": (n == 1)
+            })
 
     return {"preview": True, "package_id": package_id, "proposed_lessons": out}
 
@@ -365,23 +418,36 @@ def create_extra_package(student_id: int, package_size: int = Query(4, ge=1, le=
         generate_lessons_for_package = None
 
     if generate_lessons_for_package:
-        # generate Lesson objects (function returns Lesson-like objects)
         lessons = generate_lessons_for_package(db, student, pkg, override_existing=False)
 
+        # Ensure chronological order and enumerate lesson_number ourselves
+        # Build list of (date, is_manual, orm_obj?) items
+        items = []
         for l in lessons:
-            # if scheduler returned ORM Lesson objects they may already be attached; handle both cases
-            if getattr(l, "lesson_id", None) is None:
+            if getattr(l, "lesson_date", None) is not None:
+                items.append(l)
+
+        # sort by date
+        items_sorted = sorted(items, key=lambda x: getattr(x, "lesson_date"))
+
+        # now enumerate and persist
+        for i, l in enumerate(items_sorted, start=1):
+            # if the scheduler returned an ORM Lesson (manual preserved), merge it but update numbers/flags
+            if getattr(l, "lesson_id", None) is not None:
+                l.lesson_number = i
+                if i == 1:
+                    l.is_first = True
+                db.merge(l)
+            else:
+                # plain object (SimpleNamespace etc.)
                 lesson = models.Lesson(
                     package_id=pkg.package_id,
-                    lesson_number=l.lesson_number,
-                    lesson_date=l.lesson_date,
-                    is_first=getattr(l, "is_first", False),
+                    lesson_number=i,
+                    lesson_date=getattr(l, "lesson_date"),
+                    is_first=(i == 1),
                     is_manual_override=getattr(l, "is_manual_override", False)
                 )
                 db.add(lesson)
-            else:
-                # already an ORM object (manual preserved) — ensure it's merged
-                db.merge(l)
 
     # update package.first_lesson_date from actual lessons persisted
     first = db.query(models.Lesson).filter(models.Lesson.package_id == pkg.package_id).order_by(models.Lesson.lesson_number).first()

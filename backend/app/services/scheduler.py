@@ -2,6 +2,8 @@
 from datetime import date, timedelta
 from typing import List, Set
 from sqlalchemy.orm import Session
+from types import SimpleNamespace
+
 from ..models import Closure, Lesson, Package, Student
 
 def _daterange(start: date, end: date):
@@ -27,7 +29,15 @@ def next_dates_for_days(start_from: date, days_of_week: List[int], needed: int, 
         cur += timedelta(days=1)
     return results
 
-def generate_lessons_for_package(db: Session, student: Student, pkg: Package, override_existing: bool = False) -> List[Lesson]:
+def generate_lessons_for_package(db: Session, student: Student, pkg: Package, override_existing: bool = False) -> List:
+    """
+    Generate a list of lesson-like objects for the package.
+
+    - Returns ORM Lesson objects for existing manual lessons (so CRUD will merge them).
+    - Returns simple objects (SimpleNamespace with .lesson_date and .is_manual_override) for new lessons.
+    - Does NOT set lesson_number. CRUD will enumerate and assign lesson_number and is_first.
+    - Manual lessons are always preserved (included) even if their dates are in closure/blocked dates.
+    """
     blocked = load_closure_dates(db)
 
     # Decide which weekdays to use
@@ -38,54 +48,70 @@ def generate_lessons_for_package(db: Session, student: Student, pkg: Package, ov
 
     start_date = student.start_date
 
-    # Optionally remove old non-manual lessons
+    # Optionally remove old non-manual lessons (only when generator asked to override)
     if override_existing:
-        db.query(Lesson).filter(Lesson.package_id == pkg.package_id, Lesson.is_manual_override == False).delete(synchronize_session=False)
+        db.query(Lesson).filter(
+            Lesson.package_id == pkg.package_id,
+            Lesson.is_manual_override == False
+        ).delete(synchronize_session=False)
         db.flush()
 
-    # Load manual lessons to preserve them (ordered by date)
-    manual_lessons = db.query(Lesson).filter(Lesson.package_id == pkg.package_id, Lesson.is_manual_override == True).order_by(Lesson.lesson_date).all()
-    manual_dates = {l.lesson_date: l for l in manual_lessons}
+    # Load manual lessons to preserve them (map by date)
+    manual_lessons = db.query(Lesson).filter(
+        Lesson.package_id == pkg.package_id,
+        Lesson.is_manual_override == True
+    ).order_by(Lesson.lesson_date).all()
+    manual_by_date = {l.lesson_date: l for l in manual_lessons}
     manual_count = len(manual_lessons)
 
+    # Quick exit: if manual lessons already satisfy package size, return them (no new lessons)
     needed = pkg.package_size - manual_count
     if needed <= 0:
-        for idx, l in enumerate(sorted(manual_lessons, key=lambda x: x.lesson_date), start=1):
-            l.lesson_number = idx
-        if manual_lessons:
-            first = sorted(manual_lessons, key=lambda x: x.lesson_date)[0]
-            first.is_first = True
-            pkg.first_lesson_date = first.lesson_date
-        return manual_lessons
+        # Let CRUD assign numbers; just return ORM objects (sorted)
+        return sorted(manual_lessons, key=lambda x: x.lesson_date)
 
-    candidates = next_dates_for_days(start_date, days, needed + 20, blocked)
+    # Build candidate dates but treat manual dates specially:
+    # - When selecting candidate dates for NEW lessons, exclude blocked dates.
+    # - But ensure manual dates are included in the output even if they are blocked.
+    # We'll collect candidate dates (excluding blocked), then interleave manual lessons by date when found.
+    candidates = next_dates_for_days(start_date, days, needed + 50, blocked)
 
-    lessons = []
-    lesson_number = 1
+    lessons_out = []
+    used_manual_dates = set()
+
+    # We iterate through candidates and pick either existing manual lesson (if date matches)
+    # or create a new simple object for that candidate.
     i = 0
-    while len(lessons) + manual_count < pkg.package_size and i < len(candidates):
+    while len([x for x in lessons_out if getattr(x, "lesson_date", None)]) + manual_count < pkg.package_size and i < len(candidates):
         cand = candidates[i]
-        if cand in manual_dates:
-            preserved = manual_dates[cand]
-            preserved.lesson_number = lesson_number
-            lessons.append(preserved)
+        if cand in manual_by_date:
+            # include the existing manual ORM object (preserve flags)
+            preserved = manual_by_date[cand]
+            lessons_out.append(preserved)
+            used_manual_dates.add(cand)
         else:
-            new = Lesson(package_id=pkg.package_id, lesson_number=lesson_number, lesson_date=cand, is_first=False, is_manual_override=False)
-            lessons.append(new)
-        lesson_number += 1
+            # create a plain lightweight object for CRUD to convert into DB row later
+            lessons_out.append(SimpleNamespace(lesson_date=cand, is_manual_override=False))
         i += 1
 
+    # If we still need more (candidates exhausted), continue scanning forward date-by-date
     cur = candidates[-1] + timedelta(days=1) if candidates else start_date
-    while len(lessons) + manual_count < pkg.package_size and cur <= start_date + timedelta(days=365*2):
-        if cur.weekday() in days and cur not in blocked and cur not in manual_dates:
-            new = Lesson(package_id=pkg.package_id, lesson_number=lesson_number, lesson_date=cur, is_first=False, is_manual_override=False)
-            lessons.append(new)
-            lesson_number += 1
+    while len([x for x in lessons_out if getattr(x, "lesson_date", None)]) + manual_count < pkg.package_size and cur <= start_date + timedelta(days=365*2):
+        # allow manual dates even if blocked (they're already handled), but only add new when not blocked and not manual
+        if cur.weekday() in days and cur not in blocked and cur not in manual_by_date:
+            lessons_out.append(SimpleNamespace(lesson_date=cur, is_manual_override=False))
         cur += timedelta(days=1)
 
-    if lessons:
-        lessons_sorted = sorted(lessons, key=lambda l: l.lesson_number)
-        lessons_sorted[0].is_first = True
-        pkg.first_lesson_date = lessons_sorted[0].lesson_date
+    # Finally, ensure manual lessons that were not included above (because their date was earlier than the first candidate)
+    # are included — manual lessons must always be preserved.
+    for m in manual_lessons:
+        if m.lesson_date not in used_manual_dates:
+            lessons_out.append(m)
 
-    return lessons
+    # Sort output by date so CRUD assigns lesson numbers in chronological order
+    # Keep ORM manual objects and SimpleNamespace objects mixed — CRUD will handle both.
+    lessons_out = sorted(lessons_out, key=lambda l: getattr(l, "lesson_date", date.max))
+
+    # Do NOT set lesson_number or is_first here — let crud.py set numbering and is_first flag when persisting.
+    # However we can set pkg.first_lesson_date candidate (optional) — but crud will compute after persisting.
+    return lessons_out

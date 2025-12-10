@@ -11,9 +11,10 @@ export default function CreateStudentForm({ onCreated }: Props) {
   const [lessonDay2, setLessonDay2] = useState<number | "">("");
   const [packageSize, setPackageSize] = useState<number>(4);
   const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>(""); // NEW
 
   const clear = () => {
-    setName(""); setCefr(""); setGroupName(""); setLessonDay1(0); setLessonDay2(""); setPackageSize(4); setStartDate("");
+    setName(""); setCefr(""); setGroupName(""); setLessonDay1(0); setLessonDay2(""); setPackageSize(4); setStartDate(""); setEndDate("");
   };
 
   const submit = async (e: React.FormEvent) => {
@@ -24,9 +25,10 @@ export default function CreateStudentForm({ onCreated }: Props) {
       group_name: groupName,
       lesson_day_1: Number(lessonDay1),
       package_size: Number(packageSize),
-      start_date: startDate,
+      start_date: startDate || undefined,
     };
     if (lessonDay2 !== "") payload.lesson_day_2 = Number(lessonDay2);
+    if (endDate) payload.end_date = endDate; // NEW: include end_date only when set
 
     try {
       await api.post("/students/", payload);
@@ -35,11 +37,6 @@ export default function CreateStudentForm({ onCreated }: Props) {
       alert("Student created");
     } catch (err: any) {
       console.error("CREATE STUDENT ERROR (full):", err);
-      // axios provides .response, .request, .message
-      console.error("err.message:", err.message);
-      console.error("err.code:", err.code);
-      console.error("err.response:", err?.response);
-      console.error("err.request:", err?.request);
       alert("Create failed: " + (err?.response?.data?.detail || err.message || JSON.stringify(err)));
     }
   };
@@ -74,6 +71,7 @@ export default function CreateStudentForm({ onCreated }: Props) {
           <option value={8}>8 lessons</option>
         </select>
         <input required type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} className="p-2 border" />
+        <input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} className="p-2 border" /> {/* NEW */}
       </div>
 
       <div className="mt-3 flex gap-2">

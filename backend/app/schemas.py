@@ -52,7 +52,7 @@ class StudentOut(BaseModel):
     class Config:
         orm_mode = True
 
-
+Student = StudentOut
 # --------------------------------------------
 # Input Schema for Creating Students
 # --------------------------------------------
@@ -76,3 +76,4 @@ class StudentUpdate(BaseModel):
     start_date: Optional[date] = None
     end_date: Optional[date] = None  
     status: Optional[str] = None
+    

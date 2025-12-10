@@ -93,7 +93,7 @@ export default function DashboardGrid() {
   const load = async () => {
     setLoading(true);
     try {
-      const res = await api.get("/students");
+      const res = await api.get("/students/");
       setStudents(res.data);
     } catch (err) {
       console.error("Failed to load students", err);
