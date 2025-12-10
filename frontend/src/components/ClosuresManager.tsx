@@ -103,7 +103,6 @@ export default function ClosuresManager() {
           >
             Add Closure
           </button>
-
           <button
             type="button"
             onClick={() => { setStartDate(""); setEndDate(""); setReason(""); setCtype(""); }}
