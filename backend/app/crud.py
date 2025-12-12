@@ -24,13 +24,16 @@ def create_student(db: Session, payload: schemas.StudentCreate) -> models.Studen
     end_date = parse_iso_date(getattr(payload, "end_date", None) or None)
     ensure_end_after_start(start_date, end_date)
 
+    # ensure package_size is an int (defensive)
+    pkg_size = int(getattr(payload, "package_size", 4))
+
     student = models.Student(
         name=payload.name,
         cefr=payload.cefr,
         group_name=payload.group_name,
         lesson_day_1=payload.lesson_day_1,
         lesson_day_2=payload.lesson_day_2,
-        package_size=payload.package_size,
+        package_size=pkg_size,
         start_date=start_date,
         end_date=end_date,
     )
@@ -42,7 +45,7 @@ def create_student(db: Session, payload: schemas.StudentCreate) -> models.Studen
         # ---- create first package ----
         pkg = models.Package(
             student_id=student.student_id,
-            package_size=student.package_size,
+            package_size=int(student.package_size),
             payment_status=False
         )
         db.add(pkg)
@@ -94,24 +97,20 @@ def create_student(db: Session, payload: schemas.StudentCreate) -> models.Studen
                 )
                 return last.lesson_date if last else None
 
-            # determine last date after first package
             last_date = last_lesson_date_for_package(pkg)
 
-            # safety limit (avoid infinite loop) - maximum additional packages (e.g. 12 months / pkg)
+            # safety limit (avoid infinite loop)
             max_additional_packages = 12
-
             added = 0
             while last_date is not None and last_date < end_date and added < max_additional_packages:
-                # create a new package for the same student
                 new_pkg = models.Package(
                     student_id=student.student_id,
-                    package_size=student.package_size,
+                    package_size=int(student.package_size),
                     payment_status=False
                 )
                 db.add(new_pkg)
-                db.flush()  # new_pkg.package_id available
+                db.flush()
 
-                # prepare a temporary student-like object with same lesson days but next start_date
                 next_start = last_date + timedelta(days=1)
                 temp_student = SimpleNamespace(
                     lesson_day_1=student.lesson_day_1,
@@ -119,10 +118,8 @@ def create_student(db: Session, payload: schemas.StudentCreate) -> models.Studen
                     start_date=next_start
                 )
 
-                # generate lessons for the new package using the temp student (scheduler uses .start_date)
                 if generate_lessons_for_package:
                     lesson_objs = generate_lessons_for_package(db, temp_student, new_pkg, override_existing=False)
-                    # persist enumerated lessons (CRUD expects to enumerate)
                     for i, lesson_obj in enumerate(lesson_objs, start=1):
                         if getattr(lesson_obj, "lesson_id", None) is None:
                             lesson = models.Lesson(
@@ -139,7 +136,6 @@ def create_student(db: Session, payload: schemas.StudentCreate) -> models.Studen
                                 lesson_obj.is_first = True
                             db.merge(lesson_obj)
 
-                    # update first_lesson_date for new package
                     first_new = (
                         db.query(models.Lesson)
                         .filter(models.Lesson.package_id == new_pkg.package_id)
@@ -152,7 +148,6 @@ def create_student(db: Session, payload: schemas.StudentCreate) -> models.Studen
                 db.commit()
                 db.refresh(new_pkg)
 
-                # advance last_date to the last lesson of the new package
                 last_date = last_lesson_date_for_package(new_pkg)
                 added += 1
 
@@ -161,6 +156,7 @@ def create_student(db: Session, payload: schemas.StudentCreate) -> models.Studen
     except Exception:
         db.rollback()
         raise
+
 
 def get_student(db: Session, student_id: int) -> Optional[models.Student]:
     return db.query(models.Student).filter(models.Student.student_id == student_id).first()
@@ -175,7 +171,7 @@ def create_package(db: Session, student: models.Student) -> models.Package:
     """Create a package for an existing student and generate lessons if generator exists."""
     pkg = models.Package(
         student_id=student.student_id,
-        package_size=student.package_size,
+        package_size=int(student.package_size),
         payment_status=False
     )
     try:

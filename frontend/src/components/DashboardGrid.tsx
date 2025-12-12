@@ -1,4 +1,4 @@
-// src/components/DashboardGrid.tsx
+// frontend/src/components/Dashboard.tsx
 import { useEffect, useMemo, useState } from "react";
 import api from "../api/client";
 import CreateStudentForm from "./CreateStudentForm";
@@ -18,12 +18,24 @@ type PackageType = {
   package_id: number;
   package_size: number;
   payment_status: boolean;
-  lessons: Lesson[];
+  first_lesson_date?: string | null;
+  lessons?: Lesson[];
 };
 
-// ----------------------
-// Inline Confirm Modal
-// ----------------------
+type StudentType = {
+  student_id: number;
+  name: string;
+  cefr?: string;
+  group_name?: string;
+  lesson_day_1: number;
+  lesson_day_2?: number | null;
+  package_size: number;
+  start_date?: string | null;
+  end_date?: string | null;
+  status?: string;
+  packages?: PackageType[];
+};
+
 function ConfirmModal({
   open,
   title,
@@ -38,10 +50,9 @@ function ConfirmModal({
   onConfirm: () => void;
 }) {
   if (!open) return null;
-
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
-      <div className="bg-white rounded-lg shadow-lg p-6 w-[380px]">
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-lg shadow-lg p-6 w-[420px]">
         <h2 className="text-xl font-semibold mb-3">{title}</h2>
         <p className="mb-6 text-gray-700">{message}</p>
 
@@ -65,36 +76,36 @@ function ConfirmModal({
   );
 }
 
-export default function DashboardGrid() {
-  const [students, setStudents] = useState<any[]>([]);
-  const [, setLoading] = useState(false);
+export default function Dashboard() {
+  const [students, setStudents] = useState<StudentType[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  // Modals
-  const [editingStudent, setEditingStudent] = useState<any | null>(null);
+  // Modals / editing
+  const [editingStudent, setEditingStudent] = useState<StudentType | null>(null);
   const [editOpen, setEditOpen] = useState(false);
 
-  const [editingLesson, setEditingLesson] = useState<any | null>(null);
+  const [editingLesson, setEditingLesson] = useState<Lesson | null>(null);
   const [lessonModalOpen, setLessonModalOpen] = useState(false);
 
   const [previewPkgId, setPreviewPkgId] = useState<number | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewCurrentLessons, setPreviewCurrentLessons] = useState<any[]>([]);
+  const [previewCurrentLessons, setPreviewCurrentLessons] = useState<Lesson[]>([]);
+
+  // Delete student modal
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [studentToDelete, setStudentToDelete] = useState<StudentType | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   // Filters
   const [tab, setTab] = useState<"all" | "4" | "8">("all");
   const [groupFilter, setGroupFilter] = useState<string>("all");
   const [dayFilter, setDayFilter] = useState<string>("all");
 
-  // NEW: delete modal state
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [studentToDelete, setStudentToDelete] = useState<any | null>(null);
-  const [deletingId, setDeletingId] = useState<number | null>(null);
-
   const load = async () => {
     setLoading(true);
     try {
       const res = await api.get("/students/");
-      setStudents(res.data);
+      setStudents(res.data || []);
     } catch (err) {
       console.error("Failed to load students", err);
       alert("Failed to load students");
@@ -107,28 +118,98 @@ export default function DashboardGrid() {
     load();
   }, []);
 
+  // compute groups list
   const groups = useMemo(() => {
     const setGroups = new Set<string>();
     for (const s of students) if (s.group_name) setGroups.add(s.group_name);
     return Array.from(setGroups).sort();
   }, [students]);
 
+  const dayLabel = (n: number) =>
+    ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][n] ?? `${n}`;
+
+  const studentMatchesFilters = (s: StudentType) => {
+    if (groupFilter !== "all" && s.group_name !== groupFilter) return false;
+
+    if (dayFilter !== "all") {
+      const dayNum = Number(dayFilter);
+      const d1 = Number(s.lesson_day_1);
+      const d2 =
+        s.lesson_day_2 !== null && s.lesson_day_2 !== undefined
+          ? Number(s.lesson_day_2)
+          : null;
+      if (d1 !== dayNum && d2 !== dayNum) return false;
+    }
+    return true;
+  };
+
+  // Build flat rows (one row per package). Keep order stable: students by name, packages by first_lesson_date
+  const rows = useMemo(() => {
+    const flat: Array<{ key: string; student: StudentType; pkg: PackageType | null; isFirstForStudent: boolean }> = [];
+
+    const filtered = students.filter(s => {
+      // student-level filters
+      return studentMatchesFilters(s);
+    });
+
+    // order students by name
+    filtered.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+    for (const s of filtered) {
+      const pkgs = (s.packages ?? []).slice(); // copy
+      // sort packages by first_lesson_date if present, otherwise by package_id
+      pkgs.sort((a, b) => {
+        const da = a.first_lesson_date ?? "";
+        const db = b.first_lesson_date ?? "";
+        if (da !== db) return da.localeCompare(db);
+        return (a.package_id ?? 0) - (b.package_id ?? 0);
+      });
+
+      if (pkgs.length === 0) {
+        // no packages - show a blank package row (pkg null)
+        flat.push({
+          key: `s-${s.student_id}-nopkg`,
+          student: s,
+          pkg: null,
+          isFirstForStudent: true,
+        });
+        continue;
+      }
+
+      pkgs.forEach((pkg, idx) => {
+        // apply tab filters (4 / 8)
+        const sz = Number(pkg.package_size);
+        if (tab === "4" && sz !== 4) return;
+        if (tab === "8" && sz !== 8) return;
+
+        flat.push({
+          key: `s-${s.student_id}-p-${pkg.package_id}`,
+          student: s,
+          pkg,
+          isFirstForStudent: idx === 0,
+        });
+      });
+    }
+
+    return flat;
+  }, [students, tab, groupFilter, dayFilter]);
+
+  // Actions
   const togglePayment = async (pkgId: number, paid: boolean) => {
     try {
       const url = paid
         ? `/students/packages/${pkgId}/mark_paid`
         : `/students/packages/${pkgId}/mark_unpaid`;
       await api.post(url);
-      load();
-    } catch (e) {
-      console.error("togglePayment error", e);
+      await load();
+    } catch (err) {
+      console.error("togglePayment error", err);
       alert("Toggle payment failed");
     }
   };
 
-  const openPreview = (pkg: any) => {
+  const openPreview = (pkg: PackageType | null) => {
     if (!pkg) return;
-
     const current = (pkg.lessons ?? []).map((l: any) => ({
       lesson_number: l.lesson_number,
       lesson_date: l.lesson_date,
@@ -170,78 +251,17 @@ export default function DashboardGrid() {
     }
   };
 
-  const studentMatchesFilters = (s: any) => {
-    if (groupFilter !== "all" && s.group_name !== groupFilter) return false;
-
-    if (dayFilter !== "all") {
-      const dayNum = Number(dayFilter);
-      const d1 = Number(s.lesson_day_1);
-      const d2 =
-        s.lesson_day_2 !== null && s.lesson_day_2 !== undefined
-          ? Number(s.lesson_day_2)
-          : null;
-
-      if (d1 !== dayNum && d2 !== dayNum) return false;
-    }
-
-    return true;
-  };
-
-  const rows = useMemo(() => {
-    const flat: any[] = [];
-
-    for (const s of students) {
-      const sid = s.student_id ?? s.id;
-      const pkgs = s.packages ?? [];
-
-      if (pkgs.length === 0) {
-        if (tab === "all" && studentMatchesFilters(s)) {
-          flat.push({
-            key: `s-${sid}-nopkg`,
-            student: s,
-            pkg: null,
-            isFirstForStudent: true,
-          });
-        }
-        continue;
-      }
-
-      pkgs.forEach((pkg: any, idx: number) => {
-        const sz = Number(pkg.package_size);
-
-        if (tab === "4" && sz !== 4) return;
-        if (tab === "8" && sz !== 8) return;
-        if (!studentMatchesFilters(s)) return;
-
-        flat.push({
-          key: `s-${sid}-p-${pkg.package_id}`,
-          student: s,
-          pkg,
-          isFirstForStudent: idx === 0,
-        });
-      });
-    }
-
-    return flat;
-  }, [students, tab, groupFilter, dayFilter]);
-
-  const dayLabel = (n: number) =>
-    ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][n] ?? `${n}`;
-
-  // -----------------------------
-  // DELETE STUDENT (modal version)
-  // -----------------------------
+  // Delete student flow (modal)
   const deleteStudentConfirmed = async () => {
     if (!studentToDelete) return;
-    const studId =
-      studentToDelete.student_id ?? studentToDelete.id;
-
+    const sid = studentToDelete.student_id;
     try {
-      setDeletingId(studId);
-      await api.delete(`/students/${studId}`);
+      setDeletingId(sid);
+      await api.delete(`/students/${sid}`);
       await load();
     } catch (err: any) {
-      alert("Delete failed: " + (err?.response?.data?.detail || err.message));
+      console.error("Delete student failed", err);
+      alert("Delete failed: " + (err?.response?.data?.detail || err?.message || ""));
     } finally {
       setDeletingId(null);
       setConfirmOpen(false);
@@ -249,8 +269,19 @@ export default function DashboardGrid() {
     }
   };
 
-  const maxCols = tab === "4" ? 4 : 8;
-  const totalCols = 5 + maxCols + 2;
+  // helper to render lesson map for a package
+  const lessonMapFor = (pkg: PackageType | null) => {
+    const map: Record<number, string> = {};
+    if (!pkg) return map;
+    for (const l of pkg.lessons ?? []) {
+      map[l.lesson_number] = l.lesson_date;
+    }
+    return map;
+  };
+
+  // UI
+  const maxCols = tab === "4" ? 4 : tab === "8" ? 8 : 8;
+  const totalCols = 5 + maxCols + 2; // name, cefr, group, day, package, lessons..., paid, actions
 
   return (
     <div className="p-6">
@@ -283,55 +314,37 @@ export default function DashboardGrid() {
           <div className="flex items-center bg-gray-50 rounded p-1">
             <button
               onClick={() => setTab("all")}
-              className={`px-3 py-1 rounded ${
-                tab === "all" ? "bg-white shadow" : "text-gray-600"
-              }`}
+              className={`px-3 py-1 rounded ${tab === "all" ? "bg-white shadow" : "text-gray-600"}`}
             >
               All
             </button>
             <button
               onClick={() => setTab("4")}
-              className={`px-3 py-1 rounded ${
-                tab === "4" ? "bg-white shadow" : "text-gray-600"
-              }`}
+              className={`px-3 py-1 rounded ${tab === "4" ? "bg-white shadow" : "text-gray-600"}`}
             >
               4-lesson
             </button>
             <button
               onClick={() => setTab("8")}
-              className={`px-3 py-1 rounded ${
-                tab === "8" ? "bg-white shadow" : "text-gray-600"
-              }`}
+              className={`px-3 py-1 rounded ${tab === "8" ? "bg-white shadow" : "text-gray-600"}`}
             >
               8-lesson
             </button>
           </div>
 
-          {/* Group Filter */}
           <div className="ml-4">
             <label className="text-xs block mb-1">Group</label>
-            <select
-              value={groupFilter}
-              onChange={(e) => setGroupFilter(e.target.value)}
-              className="p-2 border rounded"
-            >
+            <select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)} className="p-2 border rounded">
               <option value="all">All groups</option>
               {groups.map((g) => (
-                <option key={g} value={g}>
-                  {g}
-                </option>
+                <option key={g} value={g}>{g}</option>
               ))}
             </select>
           </div>
 
-          {/* Day Filter */}
           <div className="ml-4">
             <label className="text-xs block mb-1">Day</label>
-            <select
-              value={dayFilter}
-              onChange={(e) => setDayFilter(e.target.value)}
-              className="p-2 border rounded"
-            >
+            <select value={dayFilter} onChange={(e) => setDayFilter(e.target.value)} className="p-2 border rounded">
               <option value="all">All days</option>
               <option value="0">Mon</option>
               <option value="1">Tue</option>
@@ -361,9 +374,7 @@ export default function DashboardGrid() {
               <th className="border px-2">Package</th>
 
               {Array.from({ length: maxCols }).map((_, i) => (
-                <th key={i} className="border px-2">
-                  {i + 1}
-                </th>
+                <th key={i} className="border px-2">{i + 1}</th>
               ))}
 
               <th className="border px-2">Paid</th>
@@ -372,50 +383,31 @@ export default function DashboardGrid() {
           </thead>
 
           <tbody>
-            {rows.map((row: any) => {
+            {rows.map((row) => {
               const s = row.student;
-              const pkg: PackageType | null = row.pkg;
-              const lessons = pkg?.lessons ?? [];
-
-              const sid = s.student_id ?? s.id;
+              const pkg = row.pkg;
+              const lessonsMap = lessonMapFor(pkg);
+              const sid = s.student_id;
 
               return (
                 <tr key={row.key}>
-                  <td className="border px-2">
-                    {row.isFirstForStudent ? s.name : ""}
-                  </td>
-                  <td className="border px-2">
-                    {row.isFirstForStudent ? s.cefr : ""}
-                  </td>
-                  <td className="border px-2">
-                    {row.isFirstForStudent ? s.group_name : ""}
-                  </td>
+                  <td className="border px-2">{row.isFirstForStudent ? s.name : ""}</td>
+                  <td className="border px-2">{row.isFirstForStudent ? s.cefr : ""}</td>
+                  <td className="border px-2">{row.isFirstForStudent ? s.group_name : ""}</td>
                   <td className="border px-2">
                     {row.isFirstForStudent
-                      ? s.lesson_day_2 !== null &&
-                        s.lesson_day_2 !== undefined
-                        ? `${dayLabel(s.lesson_day_1)}, ${dayLabel(
-                            s.lesson_day_2
-                          )}`
+                      ? s.lesson_day_2 !== null && s.lesson_day_2 !== undefined
+                        ? `${dayLabel(s.lesson_day_1)}, ${dayLabel(s.lesson_day_2)}`
                         : `${dayLabel(s.lesson_day_1)}`
                       : ""}
                   </td>
 
-                  <td className="border px-2">
-                    {pkg ? pkg.package_size : ""}
-                  </td>
+                  <td className="border px-2">{pkg ? pkg.package_size : ""}</td>
 
                   {Array.from({ length: maxCols }).map((_, idx) => {
-                    const lesson = lessons.find(
-                      (l: any) => l.lesson_number === idx + 1
-                    );
+                    const lesson = pkg?.lessons?.find(l => l.lesson_number === idx + 1);
                     const isManual = !!lesson?.is_manual_override;
-                    const color =
-                      lesson?.is_first &&
-                      pkg &&
-                      !pkg.payment_status
-                        ? "text-red-600 font-semibold"
-                        : "";
+                    const color = lesson?.is_first && pkg && !pkg.payment_status ? "text-red-600 font-semibold" : "";
 
                     return (
                       <td
@@ -440,19 +432,15 @@ export default function DashboardGrid() {
                     );
                   })}
 
-                  <td className="border px-2">
-                    {pkg ? (pkg.payment_status ? "Paid" : "Unpaid") : ""}
-                  </td>
+                  <td className="border px-2">{pkg ? (pkg.payment_status ? "Paid" : "Unpaid") : ""}</td>
 
                   <td className="border px-2 space-x-2">
                     {pkg && (
                       <>
                         <button
-                          onClick={() =>
-                            togglePayment(pkg.package_id, !pkg.payment_status)
-                          }
+                          onClick={() => togglePayment(pkg.package_id, !pkg.payment_status)}
                           disabled={deletingId === sid}
-                          className="px-2 py-1 text-sm bg-indigo-600 text-white rounded"
+                          className="px-2 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700"
                         >
                           {pkg.payment_status ? "Mark Unpaid" : "Mark Paid"}
                         </button>
@@ -460,7 +448,7 @@ export default function DashboardGrid() {
                         <button
                           onClick={() => openPreview(pkg)}
                           disabled={deletingId === sid}
-                          className="px-2 py-1 text-sm border rounded"
+                          className="px-2 py-1 text-sm border rounded hover:bg-gray-50"
                         >
                           Regenerate
                         </button>
@@ -475,19 +463,18 @@ export default function DashboardGrid() {
                             setEditOpen(true);
                           }}
                           disabled={deletingId === sid}
-                          className="px-2 py-1 text-sm border rounded"
+                          className="px-2 py-1 text-sm border rounded hover:bg-blue-50"
                         >
                           Edit
                         </button>
 
-                        {/* NEW Delete button */}
                         <button
                           onClick={() => {
                             setStudentToDelete(s);
                             setConfirmOpen(true);
                           }}
                           disabled={deletingId === sid}
-                          className="px-2 py-1 text-sm bg-red-600 text-white rounded"
+                          className="px-2 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
                         >
                           {deletingId === sid ? "Deleting..." : "Delete"}
                         </button>
@@ -544,7 +531,7 @@ export default function DashboardGrid() {
         onCommitted={() => load()}
       />
 
-      {/* DELETE CONFIRM MODAL */}
+      {/* Delete student confirm modal */}
       <ConfirmModal
         open={confirmOpen}
         title="Delete Student?"

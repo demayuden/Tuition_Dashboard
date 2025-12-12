@@ -41,7 +41,7 @@ def generate_lessons_for_package(db: Session, student: Student, pkg: Package, ov
     blocked = load_closure_dates(db)
 
     # Decide which weekdays to use
-    if pkg.package_size == 8 and student.lesson_day_2 is not None:
+    if int(getattr(pkg, "package_size", 0)) == 8 and getattr(student, "lesson_day_2", None) is not None:
         days = sorted({student.lesson_day_1, student.lesson_day_2})
     else:
         days = [student.lesson_day_1]
