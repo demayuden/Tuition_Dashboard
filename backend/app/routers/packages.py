@@ -111,10 +111,15 @@ def regenerate_lessons(package_id: int, preview: bool = Query(False), db: Sessio
     return {"status": "ok", "message": "Regenerated", "package_id": package_id}
 
 @extra_router.get("/students/packages/{package_id}/regenerate")
-def regenerate_preview_get(package_id: int, db: Session = Depends(get_db)):
+def regenerate_preview_get(
+    package_id: int,
+    extend: bool = Query(False),
+    db: Session = Depends(get_db)
+):
     """
     GET preview for regenerate (no DB changes).
-    Returns proposed lesson dates for the package without persisting them.
+    If extend=true -> return multiple package-sized blocks up to student's end_date (or a 2-year safety limit).
+    Otherwise returns a single package's proposed lessons.
     """
     pkg = crud.get_package(db, package_id)
     if not pkg:
@@ -126,44 +131,106 @@ def regenerate_preview_get(package_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Scheduler not available")
 
     student = pkg.student
-    proposed = generate_lessons_for_package(db, student, pkg, override_existing=False)
 
-    # convert to plain items, ensure each has a date and is_manual flag
-    flat = []
-    for l in proposed:
-        ld = getattr(l, "lesson_date", None)
-        flat.append({
-            "lesson_date": ld.isoformat() if ld is not None else None,
-            "is_manual_override": bool(getattr(l, "is_manual_override", False))
-        })
-
-    # assign lesson_number by chronological order (1..N)
-    dated = [f for f in flat if f["lesson_date"]]
-    dated_sorted = sorted(dated, key=lambda x: x["lesson_date"])
-    for idx, item in enumerate(dated_sorted, start=1):
-        item["lesson_number"] = idx
-
-    # produce fixed-length list of size package_size, filling missing slots with nulls
-    out = []
-    num_map = {i["lesson_number"]: i for i in dated_sorted}
-    for n in range(1, pkg.package_size + 1):
-        it = num_map.get(n)
-        if it:
+    # simple single-block preview
+    if not extend:
+        proposed = generate_lessons_for_package(db, student, pkg, override_existing=False)
+        out: List[Dict] = []
+        for l in proposed or []:
             out.append({
-                "lesson_number": n,
-                "lesson_date": it["lesson_date"],
-                "is_manual_override": it["is_manual_override"],
-                "is_first": (n == 1)
+                "lesson_number": getattr(l, "lesson_number", None),
+                "lesson_date": getattr(l, "lesson_date").isoformat() if getattr(l, "lesson_date", None) else None,
+                "is_manual_override": bool(getattr(l, "is_manual_override", False)),
+                "is_first": bool(getattr(l, "is_first", False)),
             })
-        else:
-            out.append({
-                "lesson_number": n,
-                "lesson_date": None,
-                "is_manual_override": False,
-                "is_first": (n == 1)
+        return {"preview": True, "package_id": package_id, "proposed_lessons": out}
+
+    # ---------- extend == True ----------
+    from datetime import date, timedelta, datetime as _datetime
+
+    chunks: List[List[Dict]] = []
+    # determine cursor: day after last lesson in this package, or student.start_date, or today
+    last_date = None
+    if pkg.lessons:
+        # pick the max lesson_date (some lessons might be None)
+        lesson_dates = [l.lesson_date for l in pkg.lessons if getattr(l, "lesson_date", None)]
+        if lesson_dates:
+            last_date = max(lesson_dates)
+
+    if last_date:
+        cursor = last_date + timedelta(days=1)
+    else:
+        cursor = student.start_date or date.today()
+
+    # compute end cutoff
+    if getattr(student, "end_date", None):
+        end_cutoff = student.end_date
+    else:
+        end_cutoff = cursor + timedelta(days=365 * 2)
+
+    max_blocks = 52
+    blocks_generated = 0
+
+    while cursor <= end_cutoff and blocks_generated < max_blocks:
+        # call generator starting from cursor
+        try:
+            block_items = generate_lessons_for_package(db, student, pkg, override_existing=False, start_from=cursor)
+        except TypeError:
+            # fallback if generator doesn't accept start_from
+            try:
+                block_items = generate_lessons_for_package(db, student, pkg, override_existing=False)
+            except Exception as e:
+                # abort on generator failure
+                break
+        except Exception:
+            break
+
+        if not block_items:
+            # nothing returned for this cursor -> stop
+            break
+
+        # Keep only items that have a lesson_date
+        dated_items = [x for x in block_items if getattr(x, "lesson_date", None)]
+        if not dated_items:
+            break
+
+        # sort by date
+        dated_items_sorted = sorted(dated_items, key=lambda x: getattr(x, "lesson_date"))
+
+        # Normalize to dicts (per-block)
+        normalized: List[Dict] = []
+        for l in dated_items_sorted:
+            normalized.append({
+                "lesson_number": None,
+                "lesson_date": getattr(l, "lesson_date").isoformat() if getattr(l, "lesson_date", None) else None,
+                "is_manual_override": bool(getattr(l, "is_manual_override", False)),
+                "is_first": False,
             })
 
-    return {"preview": True, "package_id": package_id, "proposed_lessons": out}
+        if not normalized:
+            break
+
+        # Append chunk and advance cursor to after last date in chunk
+        chunks.append(normalized)
+        last_date_in_block = None
+        for it in reversed(normalized):
+            if it["lesson_date"]:
+                last_date_in_block = _datetime.fromisoformat(it["lesson_date"]).date()
+                break
+        if not last_date_in_block:
+            break
+
+        cursor = last_date_in_block + timedelta(days=1)
+        blocks_generated += 1
+        if cursor > end_cutoff:
+            break
+
+    # flatten chunks into a single list (frontend will chunk by package_size)
+    flat: List[Dict] = []
+    for ch in chunks:
+        flat.extend(ch)
+
+    return {"preview": True, "package_id": package_id, "proposed_lessons": flat}
 
 @extra_router.get("/export/dashboard.xlsx")
 def export_dashboard_xlsx(
@@ -358,6 +425,7 @@ def edit_lesson(lesson_id: int, payload: LessonEditPayload, db: Session = Depend
             db.refresh(pkg)
 
     return lesson
+
 # --------------------------------------------------------
 # GET ONE PACKAGE
 # --------------------------------------------------------

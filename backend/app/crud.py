@@ -15,17 +15,22 @@ except Exception:
 
 # ---------- STUDENT CRUD ----------
 def create_student(db: Session, payload: schemas.StudentCreate) -> models.Student:
-    """Create a student, create an initial package and (optionally) generate lessons.
-       If payload.end_date provided, create additional packages only if the package's
-       first_lesson_date is on or before end_date.
+    """
+    Create a student and a single package. Generate up to `package_size` lessons,
+    but stop at the student's end_date if provided. Do NOT auto-create additional packages.
+    Keep package_size stored as the chosen value (4 or 8) even if fewer lessons are generated.
     """
     # normalize dates from schemas (payload may already be date objects)
     start_date = parse_iso_date(getattr(payload, "start_date", None) or None)
     end_date = parse_iso_date(getattr(payload, "end_date", None) or None)
     ensure_end_after_start(start_date, end_date)
 
-    # ensure package_size is an int (defensive)
-    pkg_size = int(getattr(payload, "package_size", 4))
+    # normalize package_size to 4 or 8 only (defensive)
+    try:
+        incoming_ps = int(getattr(payload, "package_size", 4))
+    except Exception:
+        incoming_ps = 4
+    pkg_size = 8 if incoming_ps >= 8 else 4
 
     student = models.Student(
         name=payload.name,
@@ -40,144 +45,81 @@ def create_student(db: Session, payload: schemas.StudentCreate) -> models.Studen
 
     try:
         db.add(student)
-        db.flush()  # so student.student_id is set
+        db.flush()  # ensure student.student_id is available
 
-        # create first package
+        # create exactly one package for this student (visible package)
         pkg = models.Package(
             student_id=student.student_id,
-            package_size=int(student.package_size),
+            package_size=pkg_size,
             payment_status=False
         )
         db.add(pkg)
-        db.flush()  # so pkg.package_id is set
+        db.flush()  # ensure pkg.package_id is available
 
-        # generate and persist lessons for this package
+        # generate lesson objects for this single package (scheduler respects student.end_date)
+        lesson_objs = []
         if generate_lessons_for_package:
-            lesson_objs = generate_lessons_for_package(db, student, pkg)
-            for i, lesson_obj in enumerate(lesson_objs, start=1):
-                if getattr(lesson_obj, "lesson_id", None) is None:
-                    lesson = models.Lesson(
-                        package_id=pkg.package_id,
-                        lesson_number=i,
-                        lesson_date=lesson_obj.lesson_date,
-                        is_first=(i == 1),
-                        is_manual_override=getattr(lesson_obj, "is_manual_override", False)
-                    )
-                    db.add(lesson)
-                else:
-                    lesson_obj.lesson_number = i
-                    if i == 1:
-                        lesson_obj.is_first = True
-                    db.merge(lesson_obj)
+            try:
+                lesson_objs = generate_lessons_for_package(db, student, pkg, override_existing=False)
+                if lesson_objs is None:
+                    lesson_objs = []
+            except TypeError:
+                # fallback for older scheduler signature
+                try:
+                    lesson_objs = generate_lessons_for_package(db, student, pkg)
+                    if lesson_objs is None:
+                        lesson_objs = []
+                except Exception as e:
+                    print("WARNING: generate_lessons_for_package failed in create_student (fallback):", e)
+                    lesson_objs = []
+            except Exception as e:
+                print("WARNING: generate_lessons_for_package failed in create_student:", e)
+                lesson_objs = []
 
-            # set first_lesson_date based on saved lessons
-            first_ld = (
-                db.query(models.Lesson)
-                .filter(models.Lesson.package_id == pkg.package_id)
-                .order_by(models.Lesson.lesson_number)
-                .first()
-            )
-            if first_ld:
-                pkg.first_lesson_date = first_ld.lesson_date
+        # Persist lessons safely
+        added = 0
+        for obj in lesson_objs:
+            if getattr(obj, "lesson_date", None) is None:
+                continue
+            added += 1
+            if added > pkg_size:
+                break
+
+            if getattr(obj, "lesson_id", None) is None:
+                lesson = models.Lesson(
+                    package_id=pkg.package_id,
+                    lesson_number=added,
+                    lesson_date=obj.lesson_date,
+                    is_first=(added == 1),
+                    is_manual_override=getattr(obj, "is_manual_override", False)
+                )
+                db.add(lesson)
+            else:
+                obj.lesson_number = added
+                if added == 1:
+                    obj.is_first = True
+                db.merge(obj)
+
+
+        # compute first_lesson_date based on persisted lessons (if any)
+        first_ld = (
+            db.query(models.Lesson)
+            .filter(models.Lesson.package_id == pkg.package_id)
+            .order_by(models.Lesson.lesson_number)
+            .first()
+        )
+        if first_ld:
+            pkg.first_lesson_date = first_ld.lesson_date
 
         db.commit()
         db.refresh(student)
         db.refresh(pkg)
-
-        # If end_date provided, create additional packages but only if their first
-        # lesson is on or before end_date
-        if end_date:
-            def last_lesson_date_for_package(p: models.Package):
-                last = (
-                    db.query(models.Lesson)
-                    .filter(models.Lesson.package_id == p.package_id)
-                    .order_by(models.Lesson.lesson_number.desc())
-                    .first()
-                )
-                return last.lesson_date if last else None
-
-            last_date = last_lesson_date_for_package(pkg)
-
-            max_additional_packages = 12
-            added = 0
-            while last_date is not None and last_date < end_date and added < max_additional_packages:
-                new_pkg = models.Package(
-                    student_id=student.student_id,
-                    package_size=int(student.package_size),
-                    payment_status=False
-                )
-                db.add(new_pkg)
-                db.flush()
-
-                next_start = last_date + timedelta(days=1)
-                temp_student = SimpleNamespace(
-                    lesson_day_1=student.lesson_day_1,
-                    lesson_day_2=student.lesson_day_2,
-                    start_date=next_start
-                )
-
-                if generate_lessons_for_package:
-                    lesson_objs = generate_lessons_for_package(db, temp_student, new_pkg, override_existing=False)
-                    for i, lesson_obj in enumerate(lesson_objs, start=1):
-                        if getattr(lesson_obj, "lesson_id", None) is None:
-                            lesson = models.Lesson(
-                                package_id=new_pkg.package_id,
-                                lesson_number=i,
-                                lesson_date=lesson_obj.lesson_date,
-                                is_first=(i == 1),
-                                is_manual_override=getattr(lesson_obj, "is_manual_override", False)
-                            )
-                            db.add(lesson)
-                        else:
-                            lesson_obj.lesson_number = i
-                            if i == 1:
-                                lesson_obj.is_first = True
-                            db.merge(lesson_obj)
-
-                # flush to compute first lesson for this new_pkg
-                db.flush()
-                first_new = (
-                    db.query(models.Lesson)
-                    .filter(models.Lesson.package_id == new_pkg.package_id)
-                    .order_by(models.Lesson.lesson_number)
-                    .first()
-                )
-
-                # if no lessons generated, drop the empty package and break
-                if first_new is None:
-                    db.query(models.Lesson).filter(models.Lesson.package_id == new_pkg.package_id).delete(synchronize_session=False)
-                    db.delete(new_pkg)
-                    db.flush()
-                    break
-
-                # only keep this package if its first lesson is on/before end_date
-                if end_date and first_new.lesson_date > end_date:
-                    # remove created lessons & package and stop creating further packages
-                    db.query(models.Lesson).filter(models.Lesson.package_id == new_pkg.package_id).delete(synchronize_session=False)
-                    db.delete(new_pkg)
-                    db.flush()
-                    break
-
-                # persist this package (set first_lesson_date, commit)
-                new_pkg.first_lesson_date = first_new.lesson_date
-                db.commit()
-                db.refresh(new_pkg)
-
-                # update last_date to the last lesson of the new package
-                last = (
-                    db.query(models.Lesson)
-                    .filter(models.Lesson.package_id == new_pkg.package_id)
-                    .order_by(models.Lesson.lesson_number.desc())
-                    .first()
-                )
-                last_date = last.lesson_date if last else None
-                added += 1
-
         return student
 
     except Exception:
         db.rollback()
         raise
+
 
 def get_student(db: Session, student_id: int) -> Optional[models.Student]:
     return db.query(models.Student).filter(models.Student.student_id == student_id).first()
@@ -199,23 +141,31 @@ def create_package(db: Session, student: models.Student) -> models.Package:
         db.add(pkg)
         db.flush()  # ensure pkg.package_id is available
 
+        lesson_objs = []
         if generate_lessons_for_package:
-            lesson_objs = generate_lessons_for_package(db, student, pkg)
-            for i, lesson_obj in enumerate(lesson_objs, start=1):
-                if getattr(lesson_obj, "lesson_id", None) is None:
-                    lesson = models.Lesson(
-                        package_id=pkg.package_id,
-                        lesson_number=i,
-                        lesson_date=lesson_obj.lesson_date,
-                        is_first=(i == 1),
-                        is_manual_override=getattr(lesson_obj, "is_manual_override", False)
-                    )
-                    db.add(lesson)
-                else:
-                    lesson_obj.lesson_number = i
-                    if i == 1:
-                        lesson_obj.is_first = True
-                    db.merge(lesson_obj)
+            try:
+                lesson_objs = generate_lessons_for_package(db, student, pkg)
+                if lesson_objs is None:
+                    lesson_objs = []
+            except Exception as e:
+                print("WARNING: generate_lessons_for_package failed in create_package:", e)
+                lesson_objs = []
+
+        for i, lesson_obj in enumerate(lesson_objs, start=1):
+            if getattr(lesson_obj, "lesson_id", None) is None:
+                lesson = models.Lesson(
+                    package_id=pkg.package_id,
+                    lesson_number=i,
+                    lesson_date=lesson_obj.lesson_date,
+                    is_first=(i == 1),
+                    is_manual_override=getattr(lesson_obj, "is_manual_override", False)
+                )
+                db.add(lesson)
+            else:
+                lesson_obj.lesson_number = i
+                if i == 1:
+                    lesson_obj.is_first = True
+                db.merge(lesson_obj)
 
             first = (
                 db.query(models.Lesson)
@@ -265,20 +215,41 @@ def regenerate_package(db: Session, package: models.Package) -> models.Package:
         ).all()
         manual_by_date = {l.lesson_date: l for l in manual_lessons}
 
+        # generate and persist lessons using new signature: (db, student, pkg, override_existing=...)
+        lesson_objs = []
         if generate_lessons_for_package:
             try:
                 lesson_objs = generate_lessons_for_package(db, student, package, override_existing=False)
             except TypeError:
-                lesson_objs = generate_lessons_for_package(db, student, package)
+                try:
+                    lesson_objs = generate_lessons_for_package(db, student, package)
+                except Exception as e:
+                    print("WARNING: generate_lessons_for_package raised in regenerate_package (fallback failed):", e)
+                    lesson_objs = []
+            except Exception as e:
+                print("WARNING: generate_lessons_for_package raised in regenerate_package:", e)
+                lesson_objs = []
 
-            for i, lesson_obj in enumerate(lesson_objs, start=1):
-                # CASE A: generator returned an existing ORM lesson (has lesson_id) -> merge and set number/flags
-                if getattr(lesson_obj, "lesson_id", None) is not None:
-                    lesson_obj.lesson_number = i
-                    if i == 1:
-                        lesson_obj.is_first = True
-                    db.merge(lesson_obj)
-                    continue
+        if lesson_objs is None:
+            lesson_objs = []
+
+        # now iterate safely (lesson_objs is guaranteed to be a list)
+        for i, lesson_obj in enumerate(lesson_objs, start=1):
+            if getattr(lesson_obj, "lesson_id", None) is None:
+                lesson = models.Lesson(
+                    package_id=pkg.package_id,
+                    lesson_number=i,
+                    lesson_date=lesson_obj.lesson_date,
+                    is_first=(i == 1),
+                    is_manual_override=getattr(lesson_obj, "is_manual_override", False)
+                )
+                db.add(lesson)
+            else:
+                lesson_obj.lesson_number = i
+                if i == 1:
+                    lesson_obj.is_first = True
+                db.merge(lesson_obj)
+
 
                 # At this point lesson_obj is not an ORM instance (plain object with lesson_date)
                 lesson_date = getattr(lesson_obj, "lesson_date", None)

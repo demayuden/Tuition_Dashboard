@@ -1,10 +1,11 @@
-// frontend/src/components/Dashboard.tsx
+// frontend/src/components/DashboardGrid.tsx
 import { useEffect, useMemo, useState } from "react";
 import api from "../api/client";
 import CreateStudentForm from "./CreateStudentForm";
 import EditStudentModal from "./EditStudentModal";
 import EditLessonModal from "./EditLessonModal";
 import RegeneratePreviewModal from "./RegeneratePreviewModal";
+import React from "react";
 
 type Lesson = {
   lesson_id: number;
@@ -100,6 +101,10 @@ export default function Dashboard() {
   const [tab, setTab] = useState<"all" | "4" | "8">("all");
   const [groupFilter, setGroupFilter] = useState<string>("all");
   const [dayFilter, setDayFilter] = useState<string>("all");
+
+  const [futurePreviewMap, setFuturePreviewMap] = useState<Record<number, any[]>>({});
+  const [showFutureMap, setShowFutureMap] = useState<Record<number, boolean>>({});
+  const [loadingFuture, setLoadingFuture] = useState<Record<number, boolean>>({});
 
   const load = async () => {
     setLoading(true);
@@ -269,12 +274,57 @@ export default function Dashboard() {
     }
   };
 
+    const fetchAndToggleFuture = async (pkg: any) => {
+      if (!pkg) return;
+      const id = pkg.package_id;
+      // if already shown -> hide
+      if (showFutureMap[id]) {
+        setShowFutureMap(prev => ({ ...prev, [id]: false }));
+        return;
+      }
+      // if already fetched -> show
+      if (futurePreviewMap[id]) {
+        setShowFutureMap(prev => ({ ...prev, [id]: true }));
+        return;
+      }
+
+      try {
+        setLoadingFuture(prev => ({ ...prev, [id]: true }));
+        // REQUEST extend=true so backend returns multiple package-sized blocks up to student's end_date
+        const res = await api.get(`/students/packages/${id}/regenerate?preview=true&extend=true`);
+        const proposed: any[] = res.data?.proposed_lessons ?? [];
+
+        // Ensure ordered by lesson_date (ISO strings)
+        const ordered = proposed.slice().sort((a: any, b: any) => {
+          const da = a.lesson_date ?? "";
+          const db = b.lesson_date ?? "";
+          return da.localeCompare(db);
+        });
+
+        // chunk into blocks of package_size
+        const chunkSize = Number(pkg.package_size) || 4;
+        const chunks: any[][] = [];
+        for (let i = 0; i < ordered.length; i += chunkSize) {
+          chunks.push(ordered.slice(i, i + chunkSize));
+        }
+
+        setFuturePreviewMap(prev => ({ ...prev, [id]: chunks }));
+        setShowFutureMap(prev => ({ ...prev, [id]: true }));
+      } catch (err) {
+        console.error("Failed to fetch future preview", err);
+        alert("Failed to load future weeks preview");
+      } finally {
+        setLoadingFuture(prev => ({ ...prev, [id]: false }));
+      }
+    };
+
   // helper to render lesson map for a package
   const lessonMapFor = (pkg: PackageType | null) => {
-    const map: Record<number, string> = {};
+    const map: Record<number, Lesson | undefined> = {};
     if (!pkg) return map;
     for (const l of pkg.lessons ?? []) {
-      map[l.lesson_number] = l.lesson_date;
+      // store the full lesson object so render code can read lesson_date, is_manual_override, is_first
+      map[Number(l.lesson_number)] = l;
     }
     return map;
   };
@@ -386,113 +436,153 @@ export default function Dashboard() {
             {rows.map((row) => {
               const s = row.student;
               const pkg = row.pkg;
+              const sid = s?.student_id ?? s?.id;
+              // prefer row.lessons if present (chunked frontend rows), otherwise build a map helper
               const lessonsMap = lessonMapFor(pkg);
-              const sid = s.student_id;
 
               return (
-                <tr key={row.key}>
-                  <td className="border px-2">{row.isFirstForStudent ? s.name : ""}</td>
-                  <td className="border px-2">{row.isFirstForStudent ? s.cefr : ""}</td>
-                  <td className="border px-2">{row.isFirstForStudent ? s.group_name : ""}</td>
-                  <td className="border px-2">
-                    {row.isFirstForStudent
-                      ? s.lesson_day_2 !== null && s.lesson_day_2 !== undefined
-                        ? `${dayLabel(s.lesson_day_1)}, ${dayLabel(s.lesson_day_2)}`
-                        : `${dayLabel(s.lesson_day_1)}`
-                      : ""}
-                  </td>
+                <React.Fragment key={row.key}>
+                  {/* Main package row */}
+                  <tr>
+                    <td className="border px-2">{row.isFirstForStudent ? s?.name : ""}</td>
+                    <td className="border px-2">{row.isFirstForStudent ? s?.cefr : ""}</td>
+                    <td className="border px-2">{row.isFirstForStudent ? s?.group_name : ""}</td>
+                    <td className="border px-2">
+                      {row.isFirstForStudent
+                        ? s?.lesson_day_2 !== null && s?.lesson_day_2 !== undefined
+                          ? `${dayLabel(s.lesson_day_1)}, ${dayLabel(s.lesson_day_2)}`
+                          : `${dayLabel(s.lesson_day_1)}`
+                        : ""}
+                    </td>
 
-                  <td className="border px-2">{pkg ? pkg.package_size : ""}</td>
+                    <td className="border px-2">{pkg ? pkg.package_size : ""}</td>
 
-                  {Array.from({ length: maxCols }).map((_, idx) => {
-                    const lesson = pkg?.lessons?.find(l => l.lesson_number === idx + 1);
-                    const isManual = !!lesson?.is_manual_override;
-                    const color = lesson?.is_first && pkg && !pkg.payment_status ? "text-red-600 font-semibold" : "";
+                    {Array.from({ length: maxCols }).map((_, idx) => {
+                      const lesson = lessonsMap[idx + 1]; // now full object or undefined
+                      const dateStr = lesson ? (lesson.lesson_date ?? "") : "";
+                      const isManual = lesson ? !!lesson.is_manual_override : false;
+                      const isFirst = lesson ? !!lesson.is_first : false;
+                      const color = isFirst && pkg && !pkg.payment_status ? "text-red-600 font-semibold" : "";
 
-                    return (
-                      <td
-                        key={idx}
-                        className={`border px-2 ${lesson ? "cursor-pointer" : ""} ${color}`}
-                        onClick={() => {
-                          if (lesson) {
-                            setEditingLesson(lesson);
-                            setLessonModalOpen(true);
-                          }
-                        }}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div>{lesson ? lesson.lesson_date : ""}</div>
-                          {isManual && (
-                            <div className="text-xs px-1 py-[1px] bg-yellow-100 border border-yellow-200 text-yellow-700 rounded">
-                              M
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                    );
-                  })}
+                      <div className="flex items-center justify-between">
+                        <div>{dateStr}</div>
+                        {isManual && (<div className="text-xs px-1 py-[1px] bg-yellow-100 border border-yellow-200 text-yellow-700 rounded">M</div>)}
+                      </div>
 
-                  <td className="border px-2">{pkg ? (pkg.payment_status ? "Paid" : "Unpaid") : ""}</td>
-
-                  <td className="border px-2 space-x-2">
-                    {pkg && (
-                      <>
-                        <button
-                          onClick={() => togglePayment(pkg.package_id, !pkg.payment_status)}
-                          disabled={deletingId === sid}
-                          className="px-2 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700"
-                        >
-                          {pkg.payment_status ? "Mark Unpaid" : "Mark Paid"}
-                        </button>
-
-                        <button
-                          onClick={() => openPreview(pkg)}
-                          disabled={deletingId === sid}
-                          className="px-2 py-1 text-sm border rounded hover:bg-gray-50"
-                        >
-                          Regenerate
-                        </button>
-                      </>
-                    )}
-
-                    {row.isFirstForStudent && (
-                      <>
-                        <button
+                      return (
+                        <td
+                          key={`main-${row.key}-c-${idx}`}
+                          className={`border px-2 ${lesson ? "cursor-pointer" : ""} ${color}`}
                           onClick={() => {
-                            setEditingStudent(s);
-                            setEditOpen(true);
+                            if (lesson) {
+                              setEditingLesson(lesson);
+                              setLessonModalOpen(true);
+                            }
                           }}
-                          disabled={deletingId === sid}
-                          className="px-2 py-1 text-sm border rounded hover:bg-blue-50"
                         >
-                          Edit
-                        </button>
+                          <div className="flex items-center justify-between">
+                            <div>{lesson ? lesson.lesson_date : ""}</div>
+                            {isManual && (
+                              <div className="text-xs px-1 py-[1px] bg-yellow-100 border border-yellow-200 text-yellow-700 rounded">
+                                M
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      );
+                    })}
 
-                        <button
-                          onClick={() => {
-                            setStudentToDelete(s);
-                            setConfirmOpen(true);
-                          }}
-                          disabled={deletingId === sid}
-                          className="px-2 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
-                        >
-                          {deletingId === sid ? "Deleting..." : "Delete"}
-                        </button>
-                      </>
-                    )}
-                  </td>
-                </tr>
+                    <td className="border px-2">{pkg ? (pkg.payment_status ? "Paid" : "Unpaid") : ""}</td>
+
+                    <td className="border px-2 space-x-2">
+                      {pkg && (
+                        <>
+                          <button
+                            onClick={() => togglePayment(pkg.package_id, !pkg.payment_status)}
+                            disabled={deletingId === sid}
+                            className="px-2 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                          >
+                            {pkg.payment_status ? "Mark Unpaid" : "Mark Paid"}
+                          </button>
+
+                          <button
+                            onClick={() => openPreview(pkg)}
+                            disabled={deletingId === sid}
+                            className="px-2 py-1 text-sm border rounded hover:bg-gray-50"
+                          >
+                            Regenerate
+                          </button>
+
+                          <button
+                            onClick={() => fetchAndToggleFuture(pkg)}
+                            disabled={deletingId === sid}
+                            className="px-2 py-1 text-sm border rounded ml-2"
+                            title="Show future weeks (preview)"
+                          >
+                            {loadingFuture[pkg.package_id] ? "Loading…" : (showFutureMap[pkg.package_id] ? "Hide Future" : "Show Future")}
+                          </button>
+                        </>
+                      )}
+
+                      {row.isFirstForStudent && (
+                        <>
+                          <button
+                            onClick={() => { setEditingStudent(s); setEditOpen(true); }}
+                            disabled={deletingId === sid}
+                            className="px-2 py-1 text-sm border rounded hover:bg-blue-50"
+                          >
+                            Edit
+                          </button>
+
+                          <button
+                            onClick={() => { setStudentToDelete(s); setConfirmOpen(true); }}
+                            disabled={deletingId === sid}
+                            className="px-2 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
+                          >
+                            {deletingId === sid ? "Deleting..." : "Delete"}
+                          </button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+
+                  {/* Preview / future chunks (render immediately after the main row) */}
+                  {row.pkg && showFutureMap[row.pkg.package_id] && futurePreviewMap[row.pkg.package_id] && (
+                    futurePreviewMap[row.pkg.package_id].map((chunk: any[], chunkIdx: number) => {
+                      // normalize chunk to maxCols length
+                      return (
+                        <tr key={`${row.key}-future-${chunkIdx}`} className="bg-yellow-50">
+                          <td className="border px-2"></td> {/* empty Name */}
+                          <td className="border px-2"></td> {/* empty CEFR */}
+                          <td className="border px-2"></td> {/* empty Group */}
+                          <td className="border px-2"></td> {/* empty Lesson Days */}
+                          <td className="border px-2">{row.pkg.package_size}</td>
+
+                          {Array.from({ length: maxCols }).map((_, idx) => {
+                            const lesson = chunk[idx]; // chunk is an array of lesson objects (may be undefined at some indexes)
+                            const date = lesson ? (lesson.lesson_date ?? "") : "";
+                            const isManual = lesson ? !!lesson.is_manual_override : false;
+                            return (
+                              <td key={`future-${row.key}-${chunkIdx}-c-${idx}`} className="border px-2 text-sm text-gray-700">
+                                <div className="flex items-center justify-between">
+                                  <div>{date}</div>
+                                  {isManual && <div className="ml-2 text-xs px-1 py-[2px] rounded bg-yellow-100 text-yellow-800 border">M</div>}
+                                </div>
+                              </td>
+                            );
+                          })}
+
+                          <td className="border px-2"></td> {/* paid cell empty */}
+                          <td className="border px-2"></td> {/* actions empty */}
+                        </tr>
+                      );
+                    })
+                  )}
+                </React.Fragment>
               );
             })}
-
-            {rows.length === 0 && (
-              <tr>
-                <td className="p-4" colSpan={totalCols}>
-                  No rows match the current filters.
-                </td>
-              </tr>
-            )}
           </tbody>
+
         </table>
       </div>
 
