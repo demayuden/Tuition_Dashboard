@@ -16,8 +16,8 @@ except Exception:
 # ---------- STUDENT CRUD ----------
 def create_student(db: Session, payload: schemas.StudentCreate) -> models.Student:
     """Create a student, create an initial package and (optionally) generate lessons.
-       Also, if payload.end_date is provided and extends beyond the generated lessons,
-       create additional packages until end_date is covered.
+       If payload.end_date provided, create additional packages only if the package's
+       first_lesson_date is on or before end_date.
     """
     # normalize dates from schemas (payload may already be date objects)
     start_date = parse_iso_date(getattr(payload, "start_date", None) or None)
@@ -40,18 +40,18 @@ def create_student(db: Session, payload: schemas.StudentCreate) -> models.Studen
 
     try:
         db.add(student)
-        db.flush()  # ensure student.student_id is available for package FK
+        db.flush()  # so student.student_id is set
 
-        # ---- create first package ----
+        # create first package
         pkg = models.Package(
             student_id=student.student_id,
             package_size=int(student.package_size),
             payment_status=False
         )
         db.add(pkg)
-        db.flush()  # ensure pkg.package_id is available for lessons
+        db.flush()  # so pkg.package_id is set
 
-        # generate and persist lessons for the first package
+        # generate and persist lessons for this package
         if generate_lessons_for_package:
             lesson_objs = generate_lessons_for_package(db, student, pkg)
             for i, lesson_obj in enumerate(lesson_objs, start=1):
@@ -70,7 +70,7 @@ def create_student(db: Session, payload: schemas.StudentCreate) -> models.Studen
                         lesson_obj.is_first = True
                     db.merge(lesson_obj)
 
-            # compute and set first_lesson_date for this package
+            # set first_lesson_date based on saved lessons
             first_ld = (
                 db.query(models.Lesson)
                 .filter(models.Lesson.package_id == pkg.package_id)
@@ -81,13 +81,12 @@ def create_student(db: Session, payload: schemas.StudentCreate) -> models.Studen
                 pkg.first_lesson_date = first_ld.lesson_date
 
         db.commit()
-        # refresh objects with DB state
         db.refresh(student)
         db.refresh(pkg)
 
-        # ---- if an end_date was provided, create extra packages to cover until end_date ----
+        # If end_date provided, create additional packages but only if their first
+        # lesson is on or before end_date
         if end_date:
-            # helper: fetch last lesson date for a package
             def last_lesson_date_for_package(p: models.Package):
                 last = (
                     db.query(models.Lesson)
@@ -99,7 +98,6 @@ def create_student(db: Session, payload: schemas.StudentCreate) -> models.Studen
 
             last_date = last_lesson_date_for_package(pkg)
 
-            # safety limit (avoid infinite loop)
             max_additional_packages = 12
             added = 0
             while last_date is not None and last_date < end_date and added < max_additional_packages:
@@ -136,19 +134,43 @@ def create_student(db: Session, payload: schemas.StudentCreate) -> models.Studen
                                 lesson_obj.is_first = True
                             db.merge(lesson_obj)
 
-                    first_new = (
-                        db.query(models.Lesson)
-                        .filter(models.Lesson.package_id == new_pkg.package_id)
-                        .order_by(models.Lesson.lesson_number)
-                        .first()
-                    )
-                    if first_new:
-                        new_pkg.first_lesson_date = first_new.lesson_date
+                # flush to compute first lesson for this new_pkg
+                db.flush()
+                first_new = (
+                    db.query(models.Lesson)
+                    .filter(models.Lesson.package_id == new_pkg.package_id)
+                    .order_by(models.Lesson.lesson_number)
+                    .first()
+                )
 
+                # if no lessons generated, drop the empty package and break
+                if first_new is None:
+                    db.query(models.Lesson).filter(models.Lesson.package_id == new_pkg.package_id).delete(synchronize_session=False)
+                    db.delete(new_pkg)
+                    db.flush()
+                    break
+
+                # only keep this package if its first lesson is on/before end_date
+                if end_date and first_new.lesson_date > end_date:
+                    # remove created lessons & package and stop creating further packages
+                    db.query(models.Lesson).filter(models.Lesson.package_id == new_pkg.package_id).delete(synchronize_session=False)
+                    db.delete(new_pkg)
+                    db.flush()
+                    break
+
+                # persist this package (set first_lesson_date, commit)
+                new_pkg.first_lesson_date = first_new.lesson_date
                 db.commit()
                 db.refresh(new_pkg)
 
-                last_date = last_lesson_date_for_package(new_pkg)
+                # update last_date to the last lesson of the new package
+                last = (
+                    db.query(models.Lesson)
+                    .filter(models.Lesson.package_id == new_pkg.package_id)
+                    .order_by(models.Lesson.lesson_number.desc())
+                    .first()
+                )
+                last_date = last.lesson_date if last else None
                 added += 1
 
         return student
@@ -156,7 +178,6 @@ def create_student(db: Session, payload: schemas.StudentCreate) -> models.Studen
     except Exception:
         db.rollback()
         raise
-
 
 def get_student(db: Session, student_id: int) -> Optional[models.Student]:
     return db.query(models.Student).filter(models.Student.student_id == student_id).first()
@@ -306,3 +327,78 @@ def regenerate_package(db: Session, package: models.Package) -> models.Package:
     except Exception:
         db.rollback()
         raise
+
+def prune_packages_to_end_date(db: Session, student: models.Student, new_end_date: date):
+    """
+    Prune / remove / trim packages for student so no package *starts* after new_end_date.
+    - Deletes packages where first_lesson_date > new_end_date (only if unpaid).
+    - For packages that start <= new_end_date but contain lessons beyond new_end_date,
+      delete those lessons and renumber remaining lessons.
+    Returns: dict with summary: {"deleted_packages": [ids], "skipped_paid": [ids], "trimmed_packages": [ids]}
+    """
+    deleted = []
+    skipped_paid = []
+    trimmed = []
+
+    # get packages ordered by first_lesson_date (nulls at end)
+    pkgs = db.query(models.Package).filter(models.Package.student_id == student.student_id).order_by(models.Package.first_lesson_date.nulls_last()).all()
+
+    for pkg in pkgs:
+        first_ld = pkg.first_lesson_date
+        # if package has no lessons (first_ld is None), decide policy: treat as start after end_date -> delete if unpaid
+        if first_ld is None:
+            # treat as starting after; delete if unpaid
+            if pkg.payment_status:
+                skipped_paid.append(pkg.package_id)
+                continue
+            # delete lessons (if any) and package
+            db.query(models.Lesson).filter(models.Lesson.package_id == pkg.package_id).delete(synchronize_session=False)
+            db.delete(pkg)
+            deleted.append(pkg.package_id)
+            continue
+
+        if first_ld > new_end_date:
+            # package starts entirely after allowed end_date
+            if pkg.payment_status:
+                skipped_paid.append(pkg.package_id)
+                continue
+            # delete package and its lessons
+            db.query(models.Lesson).filter(models.Lesson.package_id == pkg.package_id).delete(synchronize_session=False)
+            db.delete(pkg)
+            deleted.append(pkg.package_id)
+        else:
+            # first lesson before or on new_end_date: check for lessons after new_end_date
+            lessons_after = db.query(models.Lesson).filter(
+                models.Lesson.package_id == pkg.package_id,
+                models.Lesson.lesson_date > new_end_date
+            ).order_by(models.Lesson.lesson_number).all()
+
+            if lessons_after:
+                # If package is paid, skip trimming (or you can still trim but safer to skip)
+                if pkg.payment_status:
+                    skipped_paid.append(pkg.package_id)
+                    continue
+
+                # delete lessons beyond end_date
+                db.query(models.Lesson).filter(
+                    models.Lesson.package_id == pkg.package_id,
+                    models.Lesson.lesson_date > new_end_date
+                ).delete(synchronize_session=False)
+
+                # now renumber remaining lessons for this package
+                remaining = db.query(models.Lesson).filter(models.Lesson.package_id == pkg.package_id).order_by(models.Lesson.lesson_date).all()
+                for idx, l in enumerate(remaining, start=1):
+                    l.lesson_number = idx
+                    l.is_first = (idx == 1)
+                # update package_size optionally (set to len(remaining))
+                pkg.package_size = len(remaining)
+                # update first_lesson_date
+                if remaining:
+                    pkg.first_lesson_date = remaining[0].lesson_date
+                else:
+                    pkg.first_lesson_date = None
+
+                trimmed.append(pkg.package_id)
+
+    db.commit()
+    return {"deleted_packages": deleted, "skipped_paid": skipped_paid, "trimmed_packages": trimmed}

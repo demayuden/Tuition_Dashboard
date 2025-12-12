@@ -72,6 +72,17 @@ def update_student(student_id: int, payload: schemas.StudentUpdate, db: Session 
 
     # if package_size changed and you want to auto-create new package, call crud.create_package(student)
     # (be careful — you may prefer an explicit endpoint to add packages)
+        # commit and refresh already done earlier in your handler
     db.commit()
     db.refresh(student)
-    return student
+
+    # if end_date was present in payload (explicitly changed), prune packages
+    if hasattr(payload, "end_date"):
+        try:
+            from ..crud import prune_packages_to_end_date
+            prune_result = prune_packages_to_end_date(db, student, student.end_date)
+            # Log the prune result - you can return this to the frontend if you want
+            print("Prune result:", prune_result)
+        except Exception as e:
+            # log and continue (do not fail PATCH because of pruning)
+            print("Error pruning packages after end_date update:", e)
