@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 import io
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font
+from datetime import date as _date
 
 router = APIRouter(prefix="/packages", tags=["Packages"])
 extra_router = APIRouter(tags=["Packages"])
@@ -31,6 +32,91 @@ def mark_unpaid(package_id: int, db: Session = Depends(get_db)):
     updated = crud.toggle_payment(db, pkg, False)
     return {"status": "ok", "payment_status": updated.payment_status}
 
+@extra_router.post("/students/packages/{package_id}/create_from_preview", response_model=schemas.PackageOut)
+def create_package_from_preview(
+    package_id: int,
+    start_from: str = Query(..., description="YYYY-MM-DD first date of the preview chunk"),
+    mark_paid: bool = Query(False),
+    db: Session = Depends(get_db),
+):
+    """
+    Persist a preview chunk as a real Package.
+    `package_id` is used only to locate the student and package_size (we don't modify the original package).
+    `start_from` - date string "YYYY-MM-DD" indicating where the block should start.
+    `mark_paid` - if true, set payment_status=True on created package.
+    """
+    pkg = crud.get_package(db, package_id)
+    if not pkg:
+        raise HTTPException(status_code=404, detail="Package not found")
+    student = pkg.student
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # parse start_from
+    try:
+        start_dt = datetime.fromisoformat(start_from).date()
+    except Exception:
+        raise HTTPException(status_code=400, detail="start_from must be YYYY-MM-DD")
+
+    # create a new Package record (same package_size as original)
+    new_pkg = models.Package(
+        student_id=student.student_id,
+        package_size=pkg.package_size,
+        payment_status=bool(mark_paid)
+    )
+    db.add(new_pkg)
+    db.flush()  # get new_pkg.package_id
+
+    # generate lessons from scheduler starting at start_dt
+    try:
+        from ..services.scheduler import generate_lessons_for_package
+    except Exception:
+        raise HTTPException(status_code=500, detail="Scheduler not available")
+
+    # Scheduler supports start_from param in your latest code
+    lesson_objs = generate_lessons_for_package(db, student, pkg, override_existing=False, start_from=start_dt)
+    if not lesson_objs:
+        # nothing to persist
+        db.delete(new_pkg)
+        db.commit()
+        raise HTTPException(status_code=400, detail="No lessons generated for the requested start date")
+
+    # Persist up to package_size (should already be limited)
+    added = 0
+    for obj in lesson_objs:
+        if getattr(obj, "lesson_date", None) is None:
+            continue
+        added += 1
+        if added > int(new_pkg.package_size):
+            break
+        if getattr(obj, "lesson_id", None) is None:
+            lesson = models.Lesson(
+                package_id=new_pkg.package_id,
+                lesson_number=added,
+                lesson_date=obj.lesson_date,
+                is_first=(added == 1),
+                is_manual_override=getattr(obj, "is_manual_override", False)
+            )
+            db.add(lesson)
+        else:
+            obj.lesson_number = added
+            if added == 1:
+                obj.is_first = True
+            db.merge(obj)
+
+    # update first_lesson_date
+    first_ld = (
+        db.query(models.Lesson)
+        .filter(models.Lesson.package_id == new_pkg.package_id)
+        .order_by(models.Lesson.lesson_number)
+        .first()
+    )
+    if first_ld:
+        new_pkg.first_lesson_date = first_ld.lesson_date
+
+    db.commit()
+    db.refresh(new_pkg)
+    return new_pkg
 
 @extra_router.post("/students/packages/{package_id}/regenerate")
 def regenerate_lessons(package_id: int, preview: bool = Query(False), db: Session = Depends(get_db)):
@@ -459,55 +545,62 @@ def mark_unpaid(package_id: int, db: Session = Depends(get_db)):
     return {"status": "ok", "package_id": updated.package_id, "payment_status": updated.payment_status}
 
 @extra_router.post("/students/{student_id}/packages", response_model=schemas.PackageOut)
-def create_extra_package(student_id: int, package_size: int = Query(4, ge=1, le=8), db: Session = Depends(get_db)):
+def create_extra_package(
+    student_id: int,
+    package_size: int = Query(4, ge=1, le=8),
+    start_from: _date | None = Query(None),
+    paid: bool = Query(False),
+    db: Session = Depends(get_db)
+):
     """
     Create an additional package for an existing student.
-    - package_size: 4 or 8 (defaults to 4)
+    Optional query params:
+      - start_from: date to start lesson generation from (first lesson)
+      - paid: if true mark package as paid after creating
     """
     # fetch student
     student = db.query(models.Student).filter(models.Student.student_id == student_id).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
+    # enforce only 4 or 8
+    pkg_size = 8 if int(package_size) >= 8 else 4
+
     # create package record
     pkg = models.Package(
         student_id=student_id,
-        package_size=package_size,
+        package_size=pkg_size,
         payment_status=False
     )
     db.add(pkg)
-    db.commit()
-    db.refresh(pkg)
+    db.flush()
 
-    # generate lessons using scheduler (if available)
+    # generate lessons using scheduler (pass start_from when provided)
     try:
         from ..services.scheduler import generate_lessons_for_package
     except Exception:
         generate_lessons_for_package = None
 
     if generate_lessons_for_package:
-        lessons = generate_lessons_for_package(db, student, pkg, override_existing=False)
+        try:
+            lesson_objs = generate_lessons_for_package(db, student, pkg, override_existing=False, start_from=start_from)
+            if lesson_objs is None:
+                lesson_objs = []
+        except TypeError:
+            # fallback if signature different
+            lesson_objs = generate_lessons_for_package(db, student, pkg)
+        except Exception:
+            lesson_objs = []
 
-        # Ensure chronological order and enumerate lesson_number ourselves
-        # Build list of (date, is_manual, orm_obj?) items
-        items = []
-        for l in lessons:
-            if getattr(l, "lesson_date", None) is not None:
-                items.append(l)
-
-        # sort by date
+        # Persist lessons (enumerate, preserve manual items)
+        items = [l for l in lesson_objs if getattr(l, "lesson_date", None) is not None]
         items_sorted = sorted(items, key=lambda x: getattr(x, "lesson_date"))
-
-        # now enumerate and persist
         for i, l in enumerate(items_sorted, start=1):
-            # if the scheduler returned an ORM Lesson (manual preserved), merge it but update numbers/flags
             if getattr(l, "lesson_id", None) is not None:
                 l.lesson_number = i
-                if i == 1:
-                    l.is_first = True
+                l.is_first = (i == 1)
                 db.merge(l)
             else:
-                # plain object (SimpleNamespace etc.)
                 lesson = models.Lesson(
                     package_id=pkg.package_id,
                     lesson_number=i,
@@ -517,14 +610,20 @@ def create_extra_package(student_id: int, package_size: int = Query(4, ge=1, le=
                 )
                 db.add(lesson)
 
-    # update package.first_lesson_date from actual lessons persisted
+    # set first_lesson_date if saved lessons exist
     first = db.query(models.Lesson).filter(models.Lesson.package_id == pkg.package_id).order_by(models.Lesson.lesson_number).first()
     if first:
         pkg.first_lesson_date = first.lesson_date
 
     db.commit()
     db.refresh(pkg)
+
+    # optionally mark paid
+    if paid:
+        pkg = toggle_payment(db, pkg, True)
+
     return pkg
+
 # --------------------------------------------------------
 # REGENERATE LESSON DATES (skip closures, recalc)
 # --------------------------------------------------------

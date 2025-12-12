@@ -213,6 +213,19 @@ export default function Dashboard() {
     }
   };
 
+  const createChunk = async (pkg: PackageType, chunkFirstDate: string, markPaid = false) => {
+    try {
+      const url = `/students/packages/${pkg.package_id}/create_from_preview?start_from=${encodeURIComponent(chunkFirstDate)}&mark_paid=${markPaid}`;
+      await api.post(url);
+      // Refresh all data so new package appears and payment toggles apply
+      await load();
+      alert(`Created package starting ${chunkFirstDate} ${markPaid ? "(marked paid)" : ""}`);
+    } catch (err: any) {
+      console.error("create chunk failed", err);
+      alert("Failed to create package: " + (err?.response?.data?.detail || err?.message || ""));
+    }
+  };
+
   const openPreview = (pkg: PackageType | null) => {
     if (!pkg) return;
     const current = (pkg.lessons ?? []).map((l: any) => ({
@@ -256,6 +269,32 @@ export default function Dashboard() {
     }
   };
 
+  // find first lesson date in chunk
+  const firstDateOfChunk = (chunk: any[]) => {
+    for (const item of chunk) {
+      if (item?.lesson_date) return item.lesson_date;
+    }
+    return null;
+  };
+
+  const createPackageFromChunk = async (studentId: number, chunk: any[], packageSize: number, markPaid = false) => {
+    const firstDate = firstDateOfChunk(chunk);
+    if (!firstDate) return alert("No date in this chunk");
+    try {
+      // call the new backend endpoint
+      const params = new URLSearchParams();
+      params.append("package_size", String(packageSize));
+      params.append("start_from", firstDate);
+      if (markPaid) params.append("paid", "true");
+
+      await api.post(`/students/${studentId}/packages?${params.toString()}`);
+      await load(); // reload dashboard
+    } catch (err: any) {
+      console.error("createPackageFromChunk error", err);
+      alert("Failed to create package from chunk: " + (err?.response?.data?.detail || err?.message));
+    }
+  };
+
   // Delete student flow (modal)
   const deleteStudentConfirmed = async () => {
     if (!studentToDelete) return;
@@ -274,49 +313,49 @@ export default function Dashboard() {
     }
   };
 
-    const fetchAndToggleFuture = async (pkg: any) => {
-      if (!pkg) return;
-      const id = pkg.package_id;
-      // if already shown -> hide
-      if (showFutureMap[id]) {
-        setShowFutureMap(prev => ({ ...prev, [id]: false }));
-        return;
+  const fetchAndToggleFuture = async (pkg: any) => {
+    if (!pkg) return;
+    const id = pkg.package_id;
+    // if already shown -> hide
+    if (showFutureMap[id]) {
+      setShowFutureMap(prev => ({ ...prev, [id]: false }));
+      return;
+    }
+    // if already fetched -> show
+    if (futurePreviewMap[id]) {
+      setShowFutureMap(prev => ({ ...prev, [id]: true }));
+      return;
+    }
+
+    try {
+      setLoadingFuture(prev => ({ ...prev, [id]: true }));
+      // REQUEST extend=true so backend returns multiple package-sized blocks up to student's end_date
+      const res = await api.get(`/students/packages/${id}/regenerate?preview=true&extend=true`);
+      const proposed: any[] = res.data?.proposed_lessons ?? [];
+
+      // Ensure ordered by lesson_date (ISO strings)
+      const ordered = proposed.slice().sort((a: any, b: any) => {
+        const da = a.lesson_date ?? "";
+        const db = b.lesson_date ?? "";
+        return da.localeCompare(db);
+      });
+
+      // chunk into blocks of package_size
+      const chunkSize = Number(pkg.package_size) || 4;
+      const chunks: any[][] = [];
+      for (let i = 0; i < ordered.length; i += chunkSize) {
+        chunks.push(ordered.slice(i, i + chunkSize));
       }
-      // if already fetched -> show
-      if (futurePreviewMap[id]) {
-        setShowFutureMap(prev => ({ ...prev, [id]: true }));
-        return;
-      }
 
-      try {
-        setLoadingFuture(prev => ({ ...prev, [id]: true }));
-        // REQUEST extend=true so backend returns multiple package-sized blocks up to student's end_date
-        const res = await api.get(`/students/packages/${id}/regenerate?preview=true&extend=true`);
-        const proposed: any[] = res.data?.proposed_lessons ?? [];
-
-        // Ensure ordered by lesson_date (ISO strings)
-        const ordered = proposed.slice().sort((a: any, b: any) => {
-          const da = a.lesson_date ?? "";
-          const db = b.lesson_date ?? "";
-          return da.localeCompare(db);
-        });
-
-        // chunk into blocks of package_size
-        const chunkSize = Number(pkg.package_size) || 4;
-        const chunks: any[][] = [];
-        for (let i = 0; i < ordered.length; i += chunkSize) {
-          chunks.push(ordered.slice(i, i + chunkSize));
-        }
-
-        setFuturePreviewMap(prev => ({ ...prev, [id]: chunks }));
-        setShowFutureMap(prev => ({ ...prev, [id]: true }));
-      } catch (err) {
-        console.error("Failed to fetch future preview", err);
-        alert("Failed to load future weeks preview");
-      } finally {
-        setLoadingFuture(prev => ({ ...prev, [id]: false }));
-      }
-    };
+      setFuturePreviewMap(prev => ({ ...prev, [id]: chunks }));
+      setShowFutureMap(prev => ({ ...prev, [id]: true }));
+    } catch (err) {
+      console.error("Failed to fetch future preview", err);
+      alert("Failed to load future weeks preview");
+    } finally {
+      setLoadingFuture(prev => ({ ...prev, [id]: false }));
+    }
+  };
 
   // helper to render lesson map for a package
   const lessonMapFor = (pkg: PackageType | null) => {
@@ -437,7 +476,6 @@ export default function Dashboard() {
               const s = row.student;
               const pkg = row.pkg;
               const sid = s?.student_id ?? s?.id;
-              // prefer row.lessons if present (chunked frontend rows), otherwise build a map helper
               const lessonsMap = lessonMapFor(pkg);
 
               return (
@@ -455,19 +493,18 @@ export default function Dashboard() {
                         : ""}
                     </td>
 
-                    <td className="border px-2">{pkg ? pkg.package_size : ""}</td>
+                    {/* PACKAGE: show only size (4 or 8) */}
+                    <td className="border px-2 text-center">
+                      {pkg ? pkg.package_size : ""}
+                    </td>
 
+                    {/* Lessons columns */}
                     {Array.from({ length: maxCols }).map((_, idx) => {
-                      const lesson = lessonsMap[idx + 1]; // now full object or undefined
+                      const lesson = lessonsMap[idx + 1];
                       const dateStr = lesson ? (lesson.lesson_date ?? "") : "";
                       const isManual = lesson ? !!lesson.is_manual_override : false;
                       const isFirst = lesson ? !!lesson.is_first : false;
                       const color = isFirst && pkg && !pkg.payment_status ? "text-red-600 font-semibold" : "";
-
-                      <div className="flex items-center justify-between">
-                        <div>{dateStr}</div>
-                        {isManual && (<div className="text-xs px-1 py-[1px] bg-yellow-100 border border-yellow-200 text-yellow-700 rounded">M</div>)}
-                      </div>
 
                       return (
                         <td
@@ -481,7 +518,7 @@ export default function Dashboard() {
                           }}
                         >
                           <div className="flex items-center justify-between">
-                            <div>{lesson ? lesson.lesson_date : ""}</div>
+                            <div>{dateStr}</div>
                             {isManual && (
                               <div className="text-xs px-1 py-[1px] bg-yellow-100 border border-yellow-200 text-yellow-700 rounded">
                                 M
@@ -549,17 +586,23 @@ export default function Dashboard() {
                   {/* Preview / future chunks (render immediately after the main row) */}
                   {row.pkg && showFutureMap[row.pkg.package_id] && futurePreviewMap[row.pkg.package_id] && (
                     futurePreviewMap[row.pkg.package_id].map((chunk: any[], chunkIdx: number) => {
-                      // normalize chunk to maxCols length
+                      const firstDate = firstDateOfChunk(chunk);
+
                       return (
                         <tr key={`${row.key}-future-${chunkIdx}`} className="bg-yellow-50">
-                          <td className="border px-2"></td> {/* empty Name */}
-                          <td className="border px-2"></td> {/* empty CEFR */}
-                          <td className="border px-2"></td> {/* empty Group */}
-                          <td className="border px-2"></td> {/* empty Lesson Days */}
-                          <td className="border px-2">{row.pkg.package_size}</td>
+                          <td className="border px-2"></td>
+                          <td className="border px-2"></td>
+                          <td className="border px-2"></td>
+                          <td className="border px-2"></td>
 
+                          {/* PACKAGE: show only size */}
+                          <td className="border px-2 text-center">
+                            {row.pkg?.package_size}
+                          </td>
+
+                          {/* Lessons (single rendering) */}
                           {Array.from({ length: maxCols }).map((_, idx) => {
-                            const lesson = chunk[idx]; // chunk is an array of lesson objects (may be undefined at some indexes)
+                            const lesson = chunk[idx];
                             const date = lesson ? (lesson.lesson_date ?? "") : "";
                             const isManual = lesson ? !!lesson.is_manual_override : false;
                             return (
@@ -572,8 +615,41 @@ export default function Dashboard() {
                             );
                           })}
 
-                          <td className="border px-2"></td> {/* paid cell empty */}
-                          <td className="border px-2"></td> {/* actions empty */}
+                          {/* Paid column empty */}
+                          <td className="border px-2"></td>
+
+                          {/* ACTIONS for preview chunk */}
+                          <td className="border px-2 space-y-2">
+                            <div className="flex flex-col sm:flex-row sm:items-center sm:space-x-2">
+                              {firstDate && (
+                                <button
+                                  onClick={() => createChunk(row.pkg!, firstDate, false)}
+                                  className="px-2 py-1 text-sm border rounded hover:bg-gray-100"
+                                >
+                                  Create
+                                </button>
+                              )}
+
+                              {firstDate && (
+                                <button
+                                  onClick={() => createChunk(row.pkg!, firstDate, true)}
+                                  className="px-2 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                                >
+                                  Mark Paid
+                                </button>
+                              )}
+
+                              <button
+                                onClick={() => openPreview(row.pkg)}
+                                className="px-2 py-1 text-sm border rounded hover:bg-gray-100"
+                              >
+                                Regenerate
+                              </button>
+                            </div>
+
+                            {/* show the first date as a small hint on wide screens */}
+                            <div className="hidden sm:block text-xs text-gray-600 mt-1">{firstDate ?? ""}</div>
+                          </td>
                         </tr>
                       );
                     })
@@ -582,7 +658,6 @@ export default function Dashboard() {
               );
             })}
           </tbody>
-
         </table>
       </div>
 
