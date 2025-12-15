@@ -506,7 +506,7 @@ export default function Dashboard() {
 
                     {/* PACKAGE: show only size (4 or 8) */}
                     <td className="border px-2 text-center">
-                      {pkg ? pkg.package_size : ""}
+                      {row.isFirstForStudent && pkg ? pkg.package_size : ""}
                     </td>
 
                     {/* Lessons columns */}

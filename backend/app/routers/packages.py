@@ -12,6 +12,8 @@ from fastapi.responses import StreamingResponse
 from ..db import get_db
 from .. import models, schemas, crud
 
+DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
 router = APIRouter(prefix="/packages", tags=["Packages"])
 extra_router = APIRouter(tags=["Packages"])
 
@@ -255,50 +257,70 @@ def edit_lesson(
 # =========================================================
 @extra_router.get("/export/dashboard.xlsx")
 def export_dashboard_xlsx(
-    tab: str = Query("all"),
+    tab: str = Query("all"),   # all | 4 | 8
     group: str = Query(""),
     day: str = Query(""),
     db: Session = Depends(get_db)
 ):
+    # determine how many lesson columns to export
+    max_lessons = 4 if tab == "4" else 8
+
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Dashboard"
 
-    ws.append(["Name", "CEFR", "Group", "Day", "L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8"])
+    header = ["Name", "CEFR", "Group", "Lesson Day", "Package Size"]
+    for i in range(1, max_lessons + 1):
+        header.append(f"L{i}")
+    header.append("Paid")
+
+    ws.append(header)
 
     students = db.query(models.Student).order_by(models.Student.name).all()
 
     for s in students:
-        if group and s.group_name != group:
-            continue
+        first_row_for_student = True
 
-        pkgs = s.packages or []
-        if not pkgs:
-            continue
+        for pkg in s.packages or []:
+            # tab filter
+            if tab == "4" and pkg.package_size != 4:
+                continue
+            if tab == "8" and pkg.package_size != 8:
+                continue
 
-        pkg = pkgs[0]
-        lesson_map = {l.lesson_number: l.lesson_date.isoformat() for l in pkg.lessons}
+            lesson_map = {
+                l.lesson_number: l.lesson_date.isoformat()
+                for l in pkg.lessons
+            }
 
-        row = [
-            s.name,
-            s.cefr or "",
-            s.group_name or "",
-            s.lesson_day_1,
-        ]
-        for i in range(1, 9):
-            row.append(lesson_map.get(i, ""))
+            row = [
+                s.name if first_row_for_student else "",
+                s.cefr or "" if first_row_for_student else "",
+                s.group_name or "" if first_row_for_student else "",
+                DAY_LABELS[s.lesson_day_1] if first_row_for_student else "",
+                pkg.package_size if first_row_for_student else "",
+            ]
 
-        ws.append(row)
+            for i in range(1, max_lessons + 1):
+                row.append(lesson_map.get(i, ""))
 
-        if not pkg.payment_status and lesson_map.get(1):
-            ws.cell(row=ws.max_row, column=5).font = Font(color="FF0000", bold=True)
+            row.append("Paid" if pkg.payment_status else "Unpaid")
 
+            ws.append(row)
+            first_row_for_student = False
+
+    # ✅ SAVE & RETURN — OUTSIDE ALL LOOPS
     stream = io.BytesIO()
     wb.save(stream)
     stream.seek(0)
 
+    filename = (
+        "dashboard_all.xlsx" if tab == "all"
+        else f"dashboard_{tab}_lesson.xlsx"
+    )
+
     return StreamingResponse(
         stream,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=dashboard.xlsx"},
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
