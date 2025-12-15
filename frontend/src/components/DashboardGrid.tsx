@@ -555,8 +555,7 @@ export default function Dashboard() {
 
                           <button
                             onClick={() => openPreview(pkg)}
-                            disabled={deletingId === sid}
-                            className="px-2 py-1 text-sm border rounded hover:bg-gray-50"
+                            className="px-2 py-1 text-sm border rounded"
                           >
                             Regenerate
                           </button>
@@ -655,12 +654,7 @@ export default function Dashboard() {
                                 </button>
                               )}
 
-                              <button
-                                onClick={() => openPreview(row.pkg)}
-                                className="px-2 py-1 text-sm border rounded hover:bg-gray-100"
-                              >
-                                Regenerate
-                              </button>
+                              <button>Regenerate</button>
                             </div>
 
                             {/* show the first date as a small hint on wide screens */}

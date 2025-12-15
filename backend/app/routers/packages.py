@@ -121,13 +121,23 @@ def create_package_from_preview(
 # REGENERATE (POST)
 # =========================================================
 @extra_router.post("/students/packages/{package_id}/regenerate")
-def regenerate_package(package_id: int, db: Session = Depends(get_db)):
+def regenerate_lessons(package_id: int, db: Session = Depends(get_db)):
     pkg = crud.get_package(db, package_id)
     if not pkg:
-        raise HTTPException(404, "Package not found")
+        raise HTTPException(status_code=404, detail="Package not found")
+
     crud.regenerate_package(db, pkg)
     return {"status": "ok", "package_id": package_id}
 
+
+@router.post("/students/packages/{package_id}/regenerate")
+def regenerate_lessons(package_id: int, db: Session = Depends(get_db)):
+    pkg = crud.get_package(db, package_id)
+    if not pkg:
+        raise HTTPException(status_code=404, detail="Package not found")
+
+    crud.regenerate_package(db, pkg)
+    return {"status": "ok", "package_id": package_id}
 
 # =========================================================
 # REGENERATE PREVIEW (GET)
@@ -135,8 +145,9 @@ def regenerate_package(package_id: int, db: Session = Depends(get_db)):
 @extra_router.get("/students/packages/{package_id}/regenerate")
 def regenerate_preview(
     package_id: int,
+    preview: bool = Query(True),
     extend: bool = Query(False),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     pkg = crud.get_package(db, package_id)
     if not pkg:
@@ -145,43 +156,64 @@ def regenerate_preview(
     from ..services.scheduler import generate_lessons_for_package
     student = pkg.student
 
+    # 🔹 SINGLE BLOCK PREVIEW (used by RegeneratePreviewModal)
     if not extend:
-        proposed = generate_lessons_for_package(db, student, pkg)
+        existing_dates = [
+            l.lesson_date for l in pkg.lessons if l.lesson_date
+        ]
+        start_from = min(existing_dates) if existing_dates else student.start_date
+
+        proposed = generate_lessons_for_package(
+            db,
+            student,
+            pkg,
+            override_existing=False,
+            start_from=start_from
+        ) or []
+
+        out = []
+        for idx, l in enumerate(proposed, start=1):
+            out.append({
+                "lesson_number": idx,                 # ✅ REQUIRED
+                "lesson_date": l.lesson_date.isoformat(),
+                "is_manual_override": False,
+                "is_first": (idx == 1),
+            })
+
         return {
             "preview": True,
             "package_id": pkg.package_id,
-            "proposed_lessons": [
-                {
-                    "lesson_number": i + 1,
-                    "lesson_date": l.lesson_date.isoformat(),
-                    "is_manual_override": False,
-                    "is_first": (i == 0),
-                }
-                for i, l in enumerate(proposed or [])
-            ]
+            "proposed_lessons": out,
         }
 
-    # EXTENDED PREVIEW
+    # 🔹 EXTENDED PREVIEW (Show Future)
     flat: List[Dict] = []
-    cursor = (
-        max([l.lesson_date for l in pkg.lessons], default=student.start_date)
-        + timedelta(days=1)
-    )
 
+    last_date = max(
+        [l.lesson_date for l in pkg.lessons if l.lesson_date],
+        default=student.start_date
+    )
+    cursor = last_date + timedelta(days=1)
     end_cutoff = student.end_date or cursor + timedelta(days=365 * 2)
 
     while cursor <= end_cutoff:
         block = generate_lessons_for_package(
-            db, student, pkg, start_from=cursor
+            db,
+            student,
+            pkg,
+            start_from=cursor
         )
         if not block:
             break
-        for l in block:
+
+        for idx, l in enumerate(block, start=1):
             flat.append({
+                "lesson_number": idx,                 # ✅ REQUIRED
                 "lesson_date": l.lesson_date.isoformat(),
                 "is_manual_override": False,
-                "is_first": False,
+                "is_first": (idx == 1),
             })
+
         cursor = block[-1].lesson_date + timedelta(days=1)
 
     return {
@@ -189,8 +221,7 @@ def regenerate_preview(
         "package_id": pkg.package_id,
         "proposed_lessons": flat,
     }
-
-
+    
 # =========================================================
 # EDIT LESSON
 # =========================================================

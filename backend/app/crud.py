@@ -60,7 +60,14 @@ def create_student(db: Session, payload: schemas.StudentCreate) -> models.Studen
         lesson_objs = []
         if generate_lessons_for_package:
             try:
-                lesson_objs = generate_lessons_for_package(db, student, pkg, override_existing=False)
+                existing_dates = [
+                    l.lesson_date for l in package.lessons
+                    if l.lesson_date is not None
+                ]
+
+                start_from = min(existing_dates) if existing_dates else student.start_date
+
+                lesson_objs = generate_lessons_for_package(db, student, pkg, override_existing=False, start_from=start_from)
                 if lesson_objs is None:
                     lesson_objs = []
             except TypeError:
@@ -200,101 +207,53 @@ def toggle_payment(db: Session, package: models.Package, status: bool) -> models
 # ---------- REGENERATE LESSONS ----------
 def regenerate_package(db: Session, package: models.Package) -> models.Package:
     student = package.student
+
     try:
-        # delete non-manual lessons
+        # 🔹 SAME start_from logic as preview
+        existing_dates = [
+            l.lesson_date for l in package.lessons if l.lesson_date
+        ]
+        start_from = min(existing_dates) if existing_dates else student.start_date
+
+        # 🔹 delete auto lessons only
         db.query(models.Lesson).filter(
             models.Lesson.package_id == package.package_id,
             models.Lesson.is_manual_override == False
         ).delete(synchronize_session=False)
         db.flush()
 
-        # load manual lessons that remain (map by date)
-        manual_lessons = db.query(models.Lesson).filter(
-            models.Lesson.package_id == package.package_id,
-            models.Lesson.is_manual_override == True
-        ).all()
-        manual_by_date = {l.lesson_date: l for l in manual_lessons}
+        from .services.scheduler import generate_lessons_for_package
 
-        # generate and persist lessons using new signature: (db, student, pkg, override_existing=...)
-        lesson_objs = []
-        if generate_lessons_for_package:
-            try:
-                lesson_objs = generate_lessons_for_package(db, student, package, override_existing=False)
-            except TypeError:
-                try:
-                    lesson_objs = generate_lessons_for_package(db, student, package)
-                except Exception as e:
-                    print("WARNING: generate_lessons_for_package raised in regenerate_package (fallback failed):", e)
-                    lesson_objs = []
-            except Exception as e:
-                print("WARNING: generate_lessons_for_package raised in regenerate_package:", e)
-                lesson_objs = []
+        lesson_objs = generate_lessons_for_package(
+            db,
+            student,
+            package,
+            override_existing=False,
+            start_from=start_from
+        ) or []
 
-        if lesson_objs is None:
-            lesson_objs = []
+        for idx, l in enumerate(lesson_objs, start=1):
+            db.add(models.Lesson(
+                package_id=package.package_id,
+                lesson_number=idx,
+                lesson_date=l.lesson_date,
+                is_first=(idx == 1),
+                is_manual_override=False
+            ))
 
-        # now iterate safely (lesson_objs is guaranteed to be a list)
-        for i, lesson_obj in enumerate(lesson_objs, start=1):
-            if getattr(lesson_obj, "lesson_id", None) is None:
-                lesson = models.Lesson(
-                    package_id=pkg.package_id,
-                    lesson_number=i,
-                    lesson_date=lesson_obj.lesson_date,
-                    is_first=(i == 1),
-                    is_manual_override=getattr(lesson_obj, "is_manual_override", False)
-                )
-                db.add(lesson)
-            else:
-                lesson_obj.lesson_number = i
-                if i == 1:
-                    lesson_obj.is_first = True
-                db.merge(lesson_obj)
-
-
-                # At this point lesson_obj is not an ORM instance (plain object with lesson_date)
-                lesson_date = getattr(lesson_obj, "lesson_date", None)
-                is_manual_flag = getattr(lesson_obj, "is_manual_override", False)
-
-                # CASE B: there's an existing manual lesson for the same date -> reuse and merge it
-                existing_manual = manual_by_date.get(lesson_date)
-                if existing_manual is not None:
-                    existing_manual.lesson_number = i
-                    if i == 1:
-                        existing_manual.is_first = True
-                    # keep manual override flag true (preserve)
-                    existing_manual.is_manual_override = True
-                    db.merge(existing_manual)
-                    continue
-
-                # CASE C: create a fresh Lesson record
-                new_lesson = models.Lesson(
-                    package_id=package.package_id,
-                    lesson_number=i,
-                    lesson_date=lesson_date,
-                    is_first=(i == 1),
-                    is_manual_override=is_manual_flag
-                )
-                db.add(new_lesson)
-
-            # commit-ish - compute and set first_lesson_date from stored lessons
-            db.flush()
-            first = (
-                db.query(models.Lesson)
-                .filter(models.Lesson.package_id == package.package_id)
-                .order_by(models.Lesson.lesson_number)
-                .first()
-            )
-            if first:
-                package.first_lesson_date = first.lesson_date
+        first = (
+            db.query(models.Lesson)
+            .filter(models.Lesson.package_id == package.package_id)
+            .order_by(models.Lesson.lesson_number)
+            .first()
+        )
+        if first:
+            package.first_lesson_date = first.lesson_date
 
         db.commit()
         db.refresh(package)
         return package
 
-    except IntegrityError as ie:
-        # Defensive: rollback and provide clearer message during dev
-        db.rollback()
-        raise
     except Exception:
         db.rollback()
         raise

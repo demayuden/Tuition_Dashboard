@@ -59,9 +59,21 @@ export default function RegeneratePreviewModal({ open, onClose, packageId, curre
   };
 
   // normalize arrays to length 8 for display
-  const maxCols = 8;
-  const cur = Array.from({ length: maxCols }).map((_, i) => currentLessons.find(l => l.lesson_number === i+1) ?? null);
-  const prop = Array.from({ length: maxCols }).map((_, i) => proposed?.find(l => l.lesson_number === i+1) ?? null);
+  const maxCols = Math.max(
+    ...[
+      ...currentLessons.map(l => l.lesson_number),
+      ...(proposed ?? []).map(l => l.lesson_number),
+      4
+    ]
+  );
+
+  const currentMap = new Map(
+    currentLessons.map(l => [l.lesson_number, l])
+  );
+
+  const proposedMap = new Map(
+    (proposed ?? []).map(l => [l.lesson_number, l])
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-black/40 p-4">
@@ -86,8 +98,8 @@ export default function RegeneratePreviewModal({ open, onClose, packageId, curre
                 <tbody>
                   {Array.from({ length: maxCols }).map((_, idx) => {
                     const index = idx + 1;
-                    const c = cur[idx];
-                    const p = prop[idx];
+                    const c = currentMap.get(index) ?? null;
+                    const p = proposedMap.get(index) ?? null;
                     const cDate = c?.lesson_date ?? "";
                     const pDate = p?.lesson_date ?? "";
                     const changed = (!!cDate || !!pDate) && cDate !== pDate;
