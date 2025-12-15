@@ -194,6 +194,7 @@ export default function Dashboard() {
           student: s,
           pkg,
           isFirstForStudent: idx === 0,
+          isOriginalPackage: idx === 0,
         });
       });
     }
@@ -543,33 +544,45 @@ export default function Dashboard() {
                     <td className="border px-2">{pkg ? (pkg.payment_status ? "Paid" : "Unpaid") : ""}</td>
 
                     <td className="border px-2 space-x-2">
-                      {pkg && (
-                        <>
-                          <button
-                            onClick={() => togglePayment(pkg.package_id, !pkg.payment_status)}
-                            disabled={deletingId === sid}
-                            className="px-2 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700"
-                          >
-                            {pkg.payment_status ? "Mark Unpaid" : "Mark Paid"}
-                          </button>
+                    {pkg && (
+                      <>
+                        {/* Always allowed */}
+                        <button
+                          onClick={() => togglePayment(pkg.package_id, !pkg.payment_status)}
+                          className="px-2 py-1 text-sm bg-indigo-600 text-white rounded"
+                        >
+                          {pkg.payment_status ? "Mark Unpaid" : "Mark Paid"}
+                        </button>
 
-                          <button
-                            onClick={() => openPreview(pkg)}
-                            className="px-2 py-1 text-sm border rounded"
-                          >
-                            Regenerate
-                          </button>
+                        <button
+                          onClick={() => openPreview(pkg)}
+                          className="px-2 py-1 text-sm border rounded"
+                        >
+                          Regenerate
+                        </button>
 
+                        <button
+                          onClick={() => fetchAndToggleFuture(pkg)}
+                          className="px-2 py-1 text-sm border rounded"
+                        >
+                          {showFutureMap[pkg.package_id] ? "Hide Future" : "Show Future"}
+                        </button>
+
+                        {/* 🔴 DELETE PACKAGE — ONLY FOR FUTURE-CREATED */}
+                        {!row.isOriginalPackage && (
                           <button
-                            onClick={() => fetchAndToggleFuture(pkg)}
-                            disabled={deletingId === sid}
-                            className="px-2 py-1 text-sm border rounded ml-2"
-                            title="Show future weeks (preview)"
+                            onClick={async () => {
+                              if (!confirm("Delete this package?")) return;
+                              await api.delete(`/students/packages/${pkg.package_id}`);
+                              await load();
+                            }}
+                            className="px-2 py-1 text-sm bg-red-600 text-white rounded"
                           >
-                            {loadingFuture[pkg.package_id] ? "Loading…" : (showFutureMap[pkg.package_id] ? "Hide Future" : "Show Future")}
+                            Delete Package
                           </button>
-                        </>
-                      )}
+                        )}
+                      </>
+                    )}
 
                       {row.isFirstForStudent && (
                         <>
@@ -644,17 +657,6 @@ export default function Dashboard() {
                                   Create
                                 </button>
                               )}
-
-                              {firstDate && (
-                                <button
-                                  onClick={() => createChunk(row.pkg!, firstDate, true)}
-                                  className="px-2 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700"
-                                >
-                                  Mark Paid
-                                </button>
-                              )}
-
-                              <button>Regenerate</button>
                             </div>
 
                             {/* show the first date as a small hint on wide screens */}

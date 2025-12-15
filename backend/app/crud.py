@@ -333,3 +333,12 @@ def prune_packages_to_end_date(db: Session, student: models.Student, new_end_dat
 
     db.commit()
     return {"deleted_packages": deleted, "skipped_paid": skipped_paid, "trimmed_packages": trimmed}
+
+def delete_package(db: Session, package: models.Package):
+    # delete lessons first (FK safety)
+    db.query(models.Lesson).filter(
+        models.Lesson.package_id == package.package_id
+    ).delete(synchronize_session=False)
+
+    db.delete(package)
+    db.commit()

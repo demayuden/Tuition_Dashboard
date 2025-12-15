@@ -324,3 +324,23 @@ def export_dashboard_xlsx(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+    
+@extra_router.delete("/students/packages/{package_id}")
+def delete_package(package_id: int, db: Session = Depends(get_db)):
+    pkg = crud.get_package(db, package_id)
+    if not pkg:
+        raise HTTPException(404, "Package not found")
+
+    # Optional safety: block deletion if paid
+    # if pkg.payment_status:
+    #     raise HTTPException(400, "Cannot delete a paid package")
+
+    # Delete lessons first (safe)
+    db.query(models.Lesson).filter(
+        models.Lesson.package_id == pkg.package_id
+    ).delete(synchronize_session=False)
+
+    db.delete(pkg)
+    db.commit()
+
+    return {"status": "deleted", "package_id": package_id}
