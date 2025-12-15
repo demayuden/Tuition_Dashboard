@@ -32,49 +32,20 @@ def delete_student(student_id: int, db: Session = Depends(get_db)):
 
 @router.patch("/{student_id}", response_model=schemas.StudentOut)
 def update_student(student_id: int, payload: schemas.StudentUpdate, db: Session = Depends(get_db)):
-    """
-    Partial update (PATCH) for student.
-    schemas.StudentUpdate should have optional fields such as:
-      name?: str, cefr?: str, group_name?: str, lesson_day_1?: int, lesson_day_2?: Optional[int],
-      package_size?: int, start_date?: date | str, end_date?: date | str
-    """
     student = crud.get_student(db, student_id)
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    # parse dates if provided and validate
-    start_date = parse_iso_date(getattr(payload, "start_date", None))
-    end_date = parse_iso_date(getattr(payload, "end_date", None))
-    # if payload provides both, ensure end >= start; if only end provided and student has start_date, validate
-    effective_start = start_date or student.start_date
-    effective_end = end_date or student.end_date
-    ensure_end_after_start(effective_start, effective_end)
+    # apply updates
+    for k, v in payload.dict(exclude_unset=True).items():
+        setattr(student, k, v)
 
-    # apply provided fields (only update when not None)
-    if getattr(payload, "name", None) is not None:
-        student.name = payload.name
-    if getattr(payload, "cefr", None) is not None:
-        student.cefr = payload.cefr
-    if getattr(payload, "group_name", None) is not None:
-        student.group_name = payload.group_name
-    if getattr(payload, "lesson_day_1", None) is not None:
-        student.lesson_day_1 = payload.lesson_day_1
-    # lesson_day_2 may be explicit null
-    if hasattr(payload, "lesson_day_2"):
-        student.lesson_day_2 = payload.lesson_day_2
-    if getattr(payload, "package_size", None) is not None:
-        student.package_size = payload.package_size
-    if start_date is not None:
-        student.start_date = start_date
-    if end_date is not None or (hasattr(payload, "end_date") and payload.end_date is None):
-        # set to parsed date or explicit null
-        student.end_date = end_date
-
-    # if package_size changed and you want to auto-create new package, call crud.create_package(student)
-    # (be careful — you may prefer an explicit endpoint to add packages)
-        # commit and refresh already done earlier in your handler
     db.commit()
     db.refresh(student)
+
+    # 🔴 IMPORTANT: re-fetch after prune / commit side-effects
+    return crud.get_student(db, student_id)
+
 
     # if end_date was present in payload (explicitly changed), prune packages
     if hasattr(payload, "end_date"):

@@ -44,9 +44,8 @@ class StudentOut(BaseModel):
     lesson_day_2: Optional[int]
     package_size: int
     start_date: date
-    end_date: Optional[date]  
-    status: str
-
+    end_date: Optional[date]
+    status: Optional[str] = None  
     packages: List[PackageOut] = []
 
     class Config:
