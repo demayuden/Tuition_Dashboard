@@ -106,6 +106,8 @@ export default function Dashboard() {
   const [showFutureMap, setShowFutureMap] = useState<Record<number, boolean>>({});
   const [loadingFuture, setLoadingFuture] = useState<Record<number, boolean>>({});
 
+  const [creatingPkg, setCreatingPkg] = useState<number | null>(null);
+
   const load = async () => {
     setLoading(true);
     try {
@@ -213,16 +215,25 @@ export default function Dashboard() {
     }
   };
 
-  const createChunk = async (pkg: PackageType, chunkFirstDate: string, markPaid = false) => {
+    const createChunk = async (pkg: PackageType, chunkFirstDate: string, markPaid = false) => {
     try {
-      const url = `/students/packages/${pkg.package_id}/create_from_preview?start_from=${encodeURIComponent(chunkFirstDate)}&mark_paid=${markPaid}`;
+      const url = `/students/packages/${pkg.package_id}/create_from_preview?start_from=${encodeURIComponent(
+        chunkFirstDate
+      )}&mark_paid=${markPaid}`;
+
       await api.post(url);
-      // Refresh all data so new package appears and payment toggles apply
+
+      // 🔴 IMPORTANT: hide future preview for this package
+      setShowFutureMap(prev => ({
+        ...prev,
+        [pkg.package_id]: false,
+      }));
+
+      // reload dashboard
       await load();
-      alert(`Created package starting ${chunkFirstDate} ${markPaid ? "(marked paid)" : ""}`);
     } catch (err: any) {
       console.error("create chunk failed", err);
-      alert("Failed to create package: " + (err?.response?.data?.detail || err?.message || ""));
+      alert("Failed to create package");
     }
   };
 
@@ -623,8 +634,13 @@ export default function Dashboard() {
                             <div className="flex flex-col sm:flex-row sm:items-center sm:space-x-2">
                               {firstDate && (
                                 <button
-                                  onClick={() => createChunk(row.pkg!, firstDate, false)}
-                                  className="px-2 py-1 text-sm border rounded hover:bg-gray-100"
+                                  disabled={creatingPkg === row.pkg!.package_id}
+                                  onClick={async () => {
+                                    setCreatingPkg(row.pkg!.package_id);
+                                    await createChunk(row.pkg!, firstDate!, false);
+                                    setCreatingPkg(null);
+                                  }}
+                                  className="px-2 py-1 text-sm border rounded disabled:opacity-50"
                                 >
                                   Create
                                 </button>
