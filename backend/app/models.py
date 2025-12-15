@@ -21,7 +21,7 @@ class Student(Base):
 
     status = Column("status", String, default="active")
 
-    packages = relationship("Package", back_populates="student", cascade="all, delete-orphan")
+    packages = relationship("Package", back_populates="student", cascade="all, delete-orphan", passive_deletes=True)
 
 
 class Package(Base):
@@ -38,20 +38,20 @@ class Package(Base):
     created_at = Column("created_at", DateTime, default=datetime.utcnow)
 
     student = relationship("Student", back_populates="packages")
-    # lessons = relationship("Lesson", back_populates="package", cascade="all, delete-orphan")
     lessons = relationship(
-    "Lesson",
-    back_populates="package",
-    lazy="selectin",          # ✅ IMPORTANT
-    order_by="Lesson.lesson_number"
-)
-
+        "Lesson",
+        back_populates="package",
+        cascade="all, delete-orphan",   # ✅ REQUIRED
+        passive_deletes=True,           # ✅ REQUIRED
+        lazy="selectin",
+        order_by="Lesson.lesson_number"
+    )
 
 class Lesson(Base):
     __tablename__ = "lessons"
 
     lesson_id = Column("lesson_id", Integer, primary_key=True, index=True)
-    package_id = Column("package_id", Integer, ForeignKey("packages.package_id"), nullable=False)
+    package_id = Column("package_id", Integer, ForeignKey("packages.package_id", ondelete="CASCADE"), nullable=False)
 
     lesson_number = Column("lesson_number", Integer, nullable=False)   # 1..4 or 1..8
     lesson_date = Column("lesson_date", Date, nullable=False)
