@@ -1,5 +1,5 @@
 # backend/app/crud.py
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from typing import Optional
 from sqlalchemy.exc import IntegrityError
 from . import models, schemas
@@ -60,13 +60,8 @@ def create_student(db: Session, payload: schemas.StudentCreate) -> models.Studen
         lesson_objs = []
         if generate_lessons_for_package:
             try:
-                existing_dates = [
-                    l.lesson_date for l in package.lessons
-                    if l.lesson_date is not None
-                ]
-
-                start_from = min(existing_dates) if existing_dates else student.start_date
-
+                start_from = student.start_date
+                
                 lesson_objs = generate_lessons_for_package(db, student, pkg, override_existing=False, start_from=start_from)
                 if lesson_objs is None:
                     lesson_objs = []
@@ -131,10 +126,16 @@ def create_student(db: Session, payload: schemas.StudentCreate) -> models.Studen
 def get_student(db: Session, student_id: int) -> Optional[models.Student]:
     return db.query(models.Student).filter(models.Student.student_id == student_id).first()
 
-
 def get_all_students(db: Session):
-    return db.query(models.Student).order_by(models.Student.name).all()
-
+    return (
+        db.query(models.Student)
+        .options(
+            selectinload(models.Student.packages)
+            .selectinload(models.Package.lessons)
+        )
+        .order_by(models.Student.name)
+        .all()
+    )
 
 # ---------- PACKAGE CRUD ----------
 def create_package(db: Session, student: models.Student) -> models.Package:

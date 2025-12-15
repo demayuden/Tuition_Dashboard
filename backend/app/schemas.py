@@ -9,13 +9,12 @@ from typing import List, Optional
 class LessonOut(BaseModel):
     lesson_id: int
     lesson_number: int
-    lesson_date: date
+    lesson_date: Optional[date]   # ✅ FIX
     is_first: bool
     is_manual_override: bool
 
     class Config:
         orm_mode = True
-
 
 # --------------------------------------------
 # Package Schema
@@ -43,9 +42,9 @@ class StudentOut(BaseModel):
     lesson_day_1: int
     lesson_day_2: Optional[int]
     package_size: int
-    start_date: date
+    start_date: Optional[date]     # ✅ SAFER
     end_date: Optional[date]
-    status: Optional[str] = None  
+    status: Optional[str] = None
     packages: List[PackageOut] = []
 
     class Config:

@@ -38,7 +38,13 @@ class Package(Base):
     created_at = Column("created_at", DateTime, default=datetime.utcnow)
 
     student = relationship("Student", back_populates="packages")
-    lessons = relationship("Lesson", back_populates="package", cascade="all, delete-orphan")
+    # lessons = relationship("Lesson", back_populates="package", cascade="all, delete-orphan")
+    lessons = relationship(
+    "Lesson",
+    back_populates="package",
+    lazy="selectin",          # ✅ IMPORTANT
+    order_by="Lesson.lesson_number"
+)
 
 
 class Lesson(Base):
