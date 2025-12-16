@@ -13,10 +13,10 @@ type Lesson = {
   lesson_id: number;
   lesson_number: number;
   lesson_date: string;
-  status?: "scheduled" | "attended" | "leave" | "cancelled";
-  is_makeup?: boolean;
   is_first: boolean;
   is_manual_override?: boolean;
+  status?: "scheduled" | "attended" | "leave";
+  is_makeup?: boolean;
 };
 
 type PackageType = {
@@ -539,38 +539,48 @@ export default function Dashboard() {
 
                       return (
                         <td
-                          key={`main-${row.key}-c-${idx}`}
-                          className={`border px-2 ${lesson ? "cursor-pointer" : ""} ${color}`}
-                          onClick={() => {
-                            if (lesson) {
-                              setEditingLesson(lesson);
-                              setLessonModalOpen(true);
-                            }
-                          }}
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-1">
-                            <span>{dateStr}</span>
+                        key={`main-${row.key}-c-${idx}`}
+                        className={`border px-2 ${lesson ? "cursor-pointer" : ""} ${color}`}
+                        onClick={() => {
+                          if (lesson) {
+                            setEditingLesson(lesson);
+                            setLessonModalOpen(true);
+                          }
+                        }}
+                      >
+                        <div className="flex items-center gap-1">
+                          {/* Date */}
+                          <span>{dateStr}</span>
 
-                            {lesson?.status === "leave" && (
-                              <span className="text-xs px-1 rounded bg-orange-100 text-orange-700 border">
-                                L
-                              </span>
-                            )}
+                          {/* Attended */}
+                          {lesson?.status === "attended" && (
+                            <span title="Attended" className="text-green-600 font-semibold">
+                              ✓
+                            </span>
+                          )}
 
-                            {lesson?.is_makeup && (
-                              <span className="text-xs px-1 rounded bg-purple-100 text-purple-700 border">
-                                M
-                              </span>
-                            )}
-                          </div>
-                            {isManual && (
-                              <div className="text-xs px-1 py-[1px] bg-yellow-100 border border-yellow-200 text-yellow-700 rounded">
-                                M
-                              </div>
-                            )}
-                          </div>
-                        </td>
+                          {/* Leave */}
+                          {lesson?.status === "leave" && (
+                            <span
+                              title="Student on leave"
+                              className="text-xs px-1 rounded bg-red-100 text-red-700 border"
+                            >
+                              L
+                            </span>
+                          )}
+
+                          {/* Make-up */}
+                          {lesson?.is_makeup && (
+                            <span
+                              title="Make-up lesson"
+                              className="text-xs px-1 rounded bg-purple-100 text-purple-700 border"
+                            >
+                              M
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
                       );
                     })}
 
