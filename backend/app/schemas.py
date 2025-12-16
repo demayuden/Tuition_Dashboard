@@ -9,7 +9,7 @@ from typing import List, Optional, Literal
 class LessonOut(BaseModel):
     lesson_id: int
     lesson_number: int
-    lesson_date: Optional[date]   # ✅ FIX
+    lesson_date: Optional[date]  
     is_first: bool
     is_manual_override: bool
 
@@ -79,7 +79,7 @@ class StudentUpdate(BaseModel):
     status: Optional[str] = None
     
 class LessonEditPayload(BaseModel):
-    lesson_date: date | None = None
-    is_manual_override: bool | None = None
-    status: Literal["scheduled", "attended", "leave"] | None = None
-    is_makeup: bool | None = None
+    lesson_date: Optional[date] = None
+    is_manual_override: Optional[bool] = None
+    status: Optional[Literal["scheduled", "attended", "leave"]] = None
+    is_makeup: Optional[bool] = None

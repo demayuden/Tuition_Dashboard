@@ -9,6 +9,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font
 from fastapi.responses import StreamingResponse
 from ..services.scheduler import load_closure_dates
+from ..schemas import LessonEditPayload
 
 from ..db import get_db
 from .. import models, schemas, crud
@@ -232,11 +233,6 @@ def regenerate_preview(
 # =========================================================
 # EDIT LESSON
 # =========================================================
-class LessonEditPayload(BaseModel):
-    lesson_date: Optional[date] = None
-    is_manual_override: Optional[bool] = None
-
-
 @extra_router.patch("/lessons/{lesson_id}/status")
 def update_lesson_status(
     lesson_id: int,
@@ -429,8 +425,8 @@ def edit_lesson(
     # -------------------------------
     # 🚫 BLOCK make-up on regular days
     # -------------------------------
-    if payload.lesson_date:
-        weekday = payload.lesson_date.weekday()  # 0=Mon
+    if payload.is_makeup is True and payload.lesson_date is not None:
+        weekday = payload.lesson_date.weekday()
 
         regular_days = {student.lesson_day_1}
         if student.lesson_day_2 is not None:
@@ -442,17 +438,21 @@ def edit_lesson(
                 detail="Make-up cannot be scheduled on regular lesson days"
             )
 
+    # ---------------------------------------
+    # APPLY UPDATES (NO BLOCKING HERE)
+    # ---------------------------------------
+    if payload.lesson_date is not None:
         lesson.lesson_date = payload.lesson_date
-        lesson.is_manual_override = True  # make-up = manual
+
+    if payload.status is not None:
+        lesson.status = payload.status
+
+    if payload.is_makeup is not None:
+        lesson.is_makeup = payload.is_makeup
+        lesson.is_manual_override = payload.is_makeup
 
     if payload.is_manual_override is not None:
         lesson.is_manual_override = payload.is_manual_override
-
-    if hasattr(payload, "status") and payload.status:
-        lesson.status = payload.status
-
-    if hasattr(payload, "is_makeup") and payload.is_makeup is not None:
-        lesson.is_makeup = payload.is_makeup
 
     db.commit()
     db.refresh(lesson)
