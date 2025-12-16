@@ -295,9 +295,12 @@ def export_dashboard_xlsx(
             if tab == "8" and pkg.package_size != 8:
                 continue
 
-            lesson_map = {
+            regular_lessons = [l for l in pkg.lessons if not l.is_makeup]
+            makeup_lessons = [l for l in pkg.lessons if l.is_makeup]
+
+            regular_map = {
                 l.lesson_number: l.lesson_date.isoformat()
-                for l in pkg.lessons
+                for l in regular_lessons
             }
 
             row = [
@@ -309,12 +312,24 @@ def export_dashboard_xlsx(
             ]
 
             for i in range(1, max_lessons + 1):
-                row.append(lesson_map.get(i, ""))
+                row.append(regular_map.get(i, ""))
 
             row.append("Paid" if pkg.payment_status else "Unpaid")
-
             ws.append(row)
             first_row_for_student = False
+            
+            if makeup_lessons:
+                mu_row = ["", "", "", "", "MU"]
+
+                for i in range(max_lessons):
+                    if i < len(makeup_lessons):
+                        mu_row.append(makeup_lessons[i].lesson_date.isoformat())
+                    else:
+                        mu_row.append("")
+
+                mu_row.append("")  # Paid column empty
+                ws.append(mu_row)
+
 
     # ✅ SAVE & RETURN — OUTSIDE ALL LOOPS
     stream = io.BytesIO()

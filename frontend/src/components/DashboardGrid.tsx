@@ -389,15 +389,14 @@ export default function Dashboard() {
   };
 
   // helper to render lesson map for a package
-  const lessonMapFor = (pkg: PackageType | null) => {
+  const lessonMapFor = (lessons: Lesson[]) => {
     const map: Record<number, Lesson | undefined> = {};
-    if (!pkg) return map;
-    for (const l of pkg.lessons ?? []) {
-      // store the full lesson object so render code can read lesson_date, is_manual_override, is_first
+    for (const l of lessons) {
       map[Number(l.lesson_number)] = l;
     }
     return map;
   };
+
 
   // UI
   const maxCols = tab === "4" ? 4 : tab === "8" ? 8 : 8;
@@ -507,7 +506,10 @@ export default function Dashboard() {
               const s = row.student;
               const pkg = row.pkg;
               const sid = s?.student_id ?? s?.id;
-              const lessonsMap = lessonMapFor(pkg);
+              const regularLessons = (pkg?.lessons ?? []).filter(l => !l.is_makeup);
+              const makeupLessons  = (pkg?.lessons ?? []).filter(l => l.is_makeup);
+              const lessonsMap = lessonMapFor(regularLessons);
+
 
               return (
                 <React.Fragment key={row.key}>
@@ -658,6 +660,58 @@ export default function Dashboard() {
                       )}
                     </td>
                   </tr>
+                  {/* 🟣 MAKE-UP ROW */}
+                {makeupLessons.length > 0 && (
+                  <tr className="bg-purple-50">
+                    <td className="border px-2"></td>
+                    <td className="border px-2"></td>
+                    <td className="border px-2"></td>
+                    <td className="border px-2"></td>
+
+                    {/* Label column */}
+                    <td className="border px-2 text-center font-semibold text-purple-700">
+                      MU
+                    </td>
+
+                    {/* Lesson cells */}
+                    {Array.from({ length: maxCols }).map((_, idx) => {
+                      const lesson = makeupLessons[idx];
+                      return (
+                        <td key={idx} className="border px-2 text-sm">
+                          {lesson && (
+                            <div className="flex items-center gap-1">
+                              <span>{lesson.lesson_date}</span>
+
+                              {/* Attended */}
+                              {lesson.status === "attended" && (
+                                <span className="text-green-600 font-semibold">✓</span>
+                              )}
+
+                              {/* Leave */}
+                              {lesson.status === "leave" && (
+                                <span className="text-xs px-1 rounded bg-red-100 text-red-700 border">
+                                  L
+                                </span>
+                              )}
+
+                              {/* Make-up badge */}
+                              <span className="text-xs px-1 rounded bg-purple-200 text-purple-800 border">
+                                M
+                              </span>
+                            </div>
+                          )}
+                        </td>
+                      );
+                    })}
+
+                    {/* Paid column */}
+                    <td className="border px-2"></td>
+
+                    {/* Actions column */}
+                    <td className="border px-2"></td>
+                  </tr>
+                )}
+
 
                   {/* Preview / future chunks (render immediately after the main row) */}
                   {row.pkg && showFutureMap[row.pkg.package_id] && futurePreviewMap[row.pkg.package_id] && (
