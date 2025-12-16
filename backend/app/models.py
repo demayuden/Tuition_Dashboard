@@ -51,18 +51,31 @@ class Lesson(Base):
     __tablename__ = "lessons"
 
     lesson_id = Column("lesson_id", Integer, primary_key=True, index=True)
-    package_id = Column("package_id", Integer, ForeignKey("packages.package_id", ondelete="CASCADE"), nullable=False)
+    package_id = Column(
+        "package_id",
+        Integer,
+        ForeignKey("packages.package_id", ondelete="CASCADE"),
+        nullable=False
+    )
 
-    lesson_number = Column("lesson_number", Integer, nullable=False)   # 1..4 or 1..8
+    lesson_number = Column("lesson_number", Integer, nullable=False)
     lesson_date = Column("lesson_date", Date, nullable=False)
 
     is_first = Column("is_first", Boolean, default=False)
     is_manual_override = Column("is_manual_override", Boolean, default=False)
 
+    # ✅ NEW — STEP 1
+    status = Column(String, default="scheduled")
+    is_makeup = Column(Boolean, default=False)
+
     package = relationship("Package", back_populates="lessons")
 
     __table_args__ = (
-        UniqueConstraint('package_id', 'lesson_number', name='unique_lesson_per_package'),
+        UniqueConstraint(
+            'package_id',
+            'lesson_number',
+            name='unique_lesson_per_package'
+        ),
     )
 
 

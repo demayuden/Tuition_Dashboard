@@ -6,11 +6,15 @@ import EditStudentModal from "./EditStudentModal";
 import EditLessonModal from "./EditLessonModal";
 import RegeneratePreviewModal from "./RegeneratePreviewModal";
 import React from "react";
+import AddMakeupModal from "./AddMakeupModal";
+
 
 type Lesson = {
   lesson_id: number;
   lesson_number: number;
   lesson_date: string;
+  status?: "scheduled" | "attended" | "leave" | "cancelled";
+  is_makeup?: boolean;
   is_first: boolean;
   is_manual_override?: boolean;
 };
@@ -107,6 +111,9 @@ export default function Dashboard() {
   const [loadingFuture, setLoadingFuture] = useState<Record<number, boolean>>({});
 
   const [creatingPkg, setCreatingPkg] = useState<number | null>(null);
+
+  const [makeupPkgId, setMakeupPkgId] = useState<number | null>(null);
+  const [makeupOpen, setMakeupOpen] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -542,7 +549,21 @@ export default function Dashboard() {
                           }}
                         >
                           <div className="flex items-center justify-between">
-                            <div>{dateStr}</div>
+                            <div className="flex items-center gap-1">
+                            <span>{dateStr}</span>
+
+                            {lesson?.status === "leave" && (
+                              <span className="text-xs px-1 rounded bg-orange-100 text-orange-700 border">
+                                L
+                              </span>
+                            )}
+
+                            {lesson?.is_makeup && (
+                              <span className="text-xs px-1 rounded bg-purple-100 text-purple-700 border">
+                                M
+                              </span>
+                            )}
+                          </div>
                             {isManual && (
                               <div className="text-xs px-1 py-[1px] bg-yellow-100 border border-yellow-200 text-yellow-700 rounded">
                                 M
@@ -571,6 +592,16 @@ export default function Dashboard() {
                           className="px-2 py-1 text-sm border rounded"
                         >
                           Regenerate
+                        </button>
+                        
+                        <button
+                          onClick={() => {
+                            setMakeupPkgId(pkg.package_id);
+                            setMakeupOpen(true);
+                          }}
+                          className="px-2 py-1 text-sm bg-purple-600 text-white rounded"
+                        >
+                          Add Make-up
                         </button>
 
                         <button
@@ -670,7 +701,6 @@ export default function Dashboard() {
                                 </button>
                               )}
                             </div>
-
                             {/* show the first date as a small hint on wide screens */}
                             <div className="hidden sm:block text-xs text-gray-600 mt-1">{firstDate ?? ""}</div>
                           </td>
@@ -718,6 +748,16 @@ export default function Dashboard() {
         packageId={previewPkgId}
         currentLessons={previewCurrentLessons}
         onCommitted={() => load()}
+      />
+
+      <AddMakeupModal
+        open={makeupOpen}
+        packageId={makeupPkgId}
+        onClose={() => {
+          setMakeupOpen(false);
+          setMakeupPkgId(null);
+        }}
+        onSaved={() => load()}
       />
 
       {/* Delete student confirm modal */}

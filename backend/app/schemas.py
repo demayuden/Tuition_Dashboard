@@ -1,7 +1,7 @@
 # backend/app/schemas.py
 from pydantic import BaseModel
 from datetime import date, datetime
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 # --------------------------------------------
 # Lesson Schema
@@ -16,6 +16,9 @@ class LessonOut(BaseModel):
     class Config:
         orm_mode = True
 
+class LessonStatusUpdate(BaseModel):
+    status: Literal["scheduled", "attended", "leave", "cancelled"]
+    
 # --------------------------------------------
 # Package Schema
 # --------------------------------------------

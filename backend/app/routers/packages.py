@@ -8,6 +8,7 @@ import openpyxl
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font
 from fastapi.responses import StreamingResponse
+from ..services.scheduler import load_closure_dates
 
 from ..db import get_db
 from .. import models, schemas, crud
@@ -20,6 +21,9 @@ extra_router = APIRouter(tags=["Packages"])
 class CreateFromPreviewPayload(BaseModel):
     lesson_dates: List[date]
 
+class MakeupPayload(BaseModel):
+    lesson_date: date
+    
 # =========================================================
 # PAYMENT
 # =========================================================
@@ -233,26 +237,32 @@ class LessonEditPayload(BaseModel):
     is_manual_override: Optional[bool] = None
 
 
-@extra_router.patch("/lessons/{lesson_id}", response_model=schemas.LessonOut)
-def edit_lesson(
+@extra_router.patch("/lessons/{lesson_id}/status")
+def update_lesson_status(
     lesson_id: int,
-    payload: LessonEditPayload,
-    db: Session = Depends(get_db)
+    payload: schemas.LessonStatusUpdate,
+    db: Session = Depends(get_db),
 ):
-    lesson = db.query(models.Lesson).filter_by(lesson_id=lesson_id).first()
-    if not lesson:
-        raise HTTPException(404, "Lesson not found")
+    lesson = db.query(models.Lesson).filter(
+        models.Lesson.lesson_id == lesson_id
+    ).first()
 
-    if payload.lesson_date is not None:
-        lesson.lesson_date = payload.lesson_date
-    if payload.is_manual_override is not None:
-        lesson.is_manual_override = payload.is_manual_override
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+
+    # ✅ Update status only
+    lesson.status = payload.status
 
     db.commit()
     db.refresh(lesson)
-    return lesson
 
-
+    return {
+        "lesson_id": lesson.lesson_id,
+        "lesson_date": lesson.lesson_date,
+        "status": lesson.status,
+        "is_makeup": lesson.is_makeup,
+    }
+    
 # =========================================================
 # EXPORT DASHBOARD (UNCHANGED CORE LOGIC)
 # =========================================================
@@ -345,3 +355,57 @@ def delete_package(package_id: int, db: Session = Depends(get_db)):
     db.commit()
 
     return {"status": "deleted", "package_id": package_id}
+
+@extra_router.post("/students/packages/{package_id}/add_makeup")
+def add_makeup_lesson(
+    package_id: int,
+    payload: MakeupPayload,
+    db: Session = Depends(get_db)
+):
+    pkg = crud.get_package(db, package_id)
+    if not pkg:
+        raise HTTPException(404, "Package not found")
+
+    student = pkg.student
+    if not student:
+        raise HTTPException(404, "Student not found")
+
+    makeup_date = payload.lesson_date
+
+    # 1️⃣ check closure
+    blocked = load_closure_dates(db)
+    if makeup_date in blocked:
+        raise HTTPException(400, "Selected date is a closure")
+
+    # 2️⃣ check duplicate date for this student
+    existing = (
+        db.query(models.Lesson)
+        .join(models.Package)
+        .filter(
+            models.Package.student_id == student.student_id,
+            models.Lesson.lesson_date == makeup_date
+        )
+        .first()
+    )
+
+    if existing:
+        raise HTTPException(400, "Student already has a lesson on this date")
+
+    # 3️⃣ add lesson (append to package)
+    new_lesson = models.Lesson(
+        package_id=pkg.package_id,
+        lesson_number=len(pkg.lessons) + 1,
+        lesson_date=makeup_date,
+        status="scheduled",
+        is_makeup=True,
+        is_manual_override=True,
+        is_first=False,
+    )
+
+    db.add(new_lesson)
+    db.commit()
+
+    return {
+        "status": "ok",
+        "lesson_date": makeup_date.isoformat()
+    }
