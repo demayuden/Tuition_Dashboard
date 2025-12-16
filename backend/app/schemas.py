@@ -78,3 +78,8 @@ class StudentUpdate(BaseModel):
     end_date: Optional[date] = None  
     status: Optional[str] = None
     
+class LessonEditPayload(BaseModel):
+    lesson_date: date | None = None
+    is_manual_override: bool | None = None
+    status: Literal["scheduled", "attended", "leave"] | None = None
+    is_makeup: bool | None = None

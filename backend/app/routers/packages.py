@@ -412,3 +412,48 @@ def add_makeup_lesson(
         "status": "ok",
         "lesson_date": makeup_date.isoformat()
     }
+    
+    
+@extra_router.patch("/lessons/{lesson_id}", response_model=schemas.LessonOut)
+def edit_lesson(
+    lesson_id: int,
+    payload: LessonEditPayload,
+    db: Session = Depends(get_db)
+):
+    lesson = db.query(models.Lesson).filter_by(lesson_id=lesson_id).first()
+    if not lesson:
+        raise HTTPException(404, "Lesson not found")
+
+    student = lesson.package.student
+
+    # -------------------------------
+    # 🚫 BLOCK make-up on regular days
+    # -------------------------------
+    if payload.lesson_date:
+        weekday = payload.lesson_date.weekday()  # 0=Mon
+
+        regular_days = {student.lesson_day_1}
+        if student.lesson_day_2 is not None:
+            regular_days.add(student.lesson_day_2)
+
+        if weekday in regular_days:
+            raise HTTPException(
+                status_code=400,
+                detail="Make-up cannot be scheduled on regular lesson days"
+            )
+
+        lesson.lesson_date = payload.lesson_date
+        lesson.is_manual_override = True  # make-up = manual
+
+    if payload.is_manual_override is not None:
+        lesson.is_manual_override = payload.is_manual_override
+
+    if hasattr(payload, "status") and payload.status:
+        lesson.status = payload.status
+
+    if hasattr(payload, "is_makeup") and payload.is_makeup is not None:
+        lesson.is_makeup = payload.is_makeup
+
+    db.commit()
+    db.refresh(lesson)
+    return lesson
