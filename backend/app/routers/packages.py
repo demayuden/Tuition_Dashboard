@@ -389,8 +389,11 @@ def add_makeup_lesson(
     )
 
     if existing:
-        raise HTTPException(400, "Student already has a lesson on this date")
-
+        raise HTTPException(
+            status_code=400,
+            detail="Student already has a lesson on this date"
+        )
+        
     # 3️⃣ add lesson (append to package)
     new_lesson = models.Lesson(
         package_id=pkg.package_id,
