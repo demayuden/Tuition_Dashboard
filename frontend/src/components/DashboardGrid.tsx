@@ -216,27 +216,39 @@ export default function Dashboard() {
     }
   };
 
-    const createChunk = async (pkg: PackageType, chunkFirstDate: string, markPaid = false) => {
-    try {
-      const url = `/students/packages/${pkg.package_id}/create_from_preview?start_from=${encodeURIComponent(
-        chunkFirstDate
-      )}&mark_paid=${markPaid}`;
+    const createChunk = async (
+      pkg: PackageType,
+      chunk: any[],
+      markPaid = false
+    ) => {
+      try {
+        setCreatingPkg(pkg.package_id);
 
-      await api.post(url);
+        await api.post(
+          `/students/packages/${pkg.package_id}/create_from_preview?mark_paid=${markPaid}`,
+          {
+            lesson_dates: chunk.map(c => c.lesson_date),
+          }
+        );
 
-      // 🔴 IMPORTANT: hide future preview for this package
-      setShowFutureMap(prev => ({
-        ...prev,
-        [pkg.package_id]: false,
-      }));
+        // hide future preview for this package
+        setShowFutureMap(prev => ({
+          ...prev,
+          [pkg.package_id]: false,
+        }));
 
-      // reload dashboard
-      await load();
-    } catch (err: any) {
-      console.error("create chunk failed", err);
-      alert("Failed to create package");
-    }
-  };
+        await load(); // reload dashboard
+      } catch (err: any) {
+        console.error("create chunk failed", err);
+        alert(
+          "Failed to create package: " +
+            (err?.response?.data?.detail || err.message)
+        );
+      } finally {
+        setCreatingPkg(null);
+      }
+    };
+  
 
   const openPreview = (pkg: PackageType | null) => {
     if (!pkg) return;
@@ -649,7 +661,7 @@ export default function Dashboard() {
                                   disabled={creatingPkg === row.pkg!.package_id}
                                   onClick={async () => {
                                     setCreatingPkg(row.pkg!.package_id);
-                                    await createChunk(row.pkg!, firstDate!, false);
+                                    await createChunk(row.pkg!, chunk, false);
                                     setCreatingPkg(null);
                                   }}
                                   className="px-2 py-1 text-sm border rounded disabled:opacity-50"

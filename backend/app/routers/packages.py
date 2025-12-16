@@ -17,6 +17,8 @@ DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 router = APIRouter(prefix="/packages", tags=["Packages"])
 extra_router = APIRouter(tags=["Packages"])
 
+class CreateFromPreviewPayload(BaseModel):
+    lesson_dates: List[date]
 
 # =========================================================
 # PAYMENT
@@ -48,7 +50,7 @@ def mark_unpaid(package_id: int, db: Session = Depends(get_db)):
 )
 def create_package_from_preview(
     package_id: int,
-    start_from: str = Query(...),
+    payload: CreateFromPreviewPayload,
     mark_paid: bool = Query(False),
     db: Session = Depends(get_db),
 ):
@@ -60,15 +62,15 @@ def create_package_from_preview(
     if not student:
         raise HTTPException(404, "Student not found")
 
-    try:
-        start_dt = datetime.fromisoformat(start_from).date()
-    except Exception:
-        raise HTTPException(400, "start_from must be YYYY-MM-DD")
+    # ✅ use preview dates directly
+    dates = payload.lesson_dates[:pkg.package_size]
 
-    if student.end_date and start_dt > student.end_date:
-        raise HTTPException(
-            400, "Start date is beyond student's end date"
-        )
+    if not dates:
+        raise HTTPException(400, "No preview dates")
+
+    # optional safety: check end_date
+    if student.end_date and dates[0] > student.end_date:
+        raise HTTPException(400, "Preview dates exceed student's end date")
 
     # create new package
     new_pkg = models.Package(
@@ -79,45 +81,23 @@ def create_package_from_preview(
     db.add(new_pkg)
     db.flush()
 
-    from ..services.scheduler import generate_lessons_for_package
-
-    lessons = generate_lessons_for_package(
-        db,
-        student,
-        new_pkg,          # ✅ IMPORTANT
-        override_existing=False,
-        start_from=start_dt,
-    )
-
-    if not lessons:
-        db.delete(new_pkg)
-        db.commit()
-        raise HTTPException(400, "No lessons generated")
-
-    for i, l in enumerate(lessons, start=1):
-        if i > new_pkg.package_size:
-            break
+    # create lessons EXACTLY as previewed
+    for i, d in enumerate(dates, start=1):
         db.add(models.Lesson(
             package_id=new_pkg.package_id,
             lesson_number=i,
-            lesson_date=l.lesson_date,
+            lesson_date=d,
             is_first=(i == 1),
             is_manual_override=False,
         ))
 
-    first = (
-        db.query(models.Lesson)
-        .filter(models.Lesson.package_id == new_pkg.package_id)
-        .order_by(models.Lesson.lesson_number)
-        .first()
-    )
-    if first:
-        new_pkg.first_lesson_date = first.lesson_date
+    new_pkg.first_lesson_date = dates[0]
 
+    # ✅ THIS WAS MISSING
     db.commit()
     db.refresh(new_pkg)
-    return new_pkg
 
+    return new_pkg
 
 # =========================================================
 # REGENERATE (POST)
@@ -156,14 +136,33 @@ def regenerate_preview(
         raise HTTPException(404, "Package not found")
 
     from ..services.scheduler import generate_lessons_for_package
-    student = pkg.student
 
-    # 🔹 SINGLE BLOCK PREVIEW (used by RegeneratePreviewModal)
+    student = pkg.student
+    if not student:
+        raise HTTPException(404, "Student not found")
+
+    # =====================================================
+    # SINGLE PACKAGE PREVIEW (Regenerate button)
+    # =====================================================
     if not extend:
-        existing_dates = [
-            l.lesson_date for l in pkg.lessons if l.lesson_date
-        ]
-        start_from = min(existing_dates) if existing_dates else student.start_date
+        # ALWAYS define prev_pkg
+        prev_pkg = (
+            db.query(models.Package)
+            .filter(
+                models.Package.student_id == student.student_id,
+                models.Package.package_id < pkg.package_id
+            )
+            .order_by(models.Package.package_id.desc())
+            .first()
+        )
+
+        if prev_pkg and prev_pkg.lessons:
+            last_prev_date = max(
+                l.lesson_date for l in prev_pkg.lessons if l.lesson_date
+            )
+            start_from = last_prev_date + timedelta(days=1)
+        else:
+            start_from = student.start_date
 
         proposed = generate_lessons_for_package(
             db,
@@ -176,7 +175,7 @@ def regenerate_preview(
         out = []
         for idx, l in enumerate(proposed, start=1):
             out.append({
-                "lesson_number": idx,                 # ✅ REQUIRED
+                "lesson_number": idx,
                 "lesson_date": l.lesson_date.isoformat(),
                 "is_manual_override": False,
                 "is_first": (idx == 1),
@@ -188,7 +187,9 @@ def regenerate_preview(
             "proposed_lessons": out,
         }
 
-    # 🔹 EXTENDED PREVIEW (Show Future)
+    # =====================================================
+    # EXTENDED PREVIEW (Show Future)
+    # =====================================================
     flat: List[Dict] = []
 
     last_date = max(
@@ -210,7 +211,7 @@ def regenerate_preview(
 
         for idx, l in enumerate(block, start=1):
             flat.append({
-                "lesson_number": idx,                 # ✅ REQUIRED
+                "lesson_number": idx,
                 "lesson_date": l.lesson_date.isoformat(),
                 "is_manual_override": False,
                 "is_first": (idx == 1),
