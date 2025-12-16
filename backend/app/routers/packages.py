@@ -6,7 +6,8 @@ from datetime import date, datetime, timedelta
 import io
 import openpyxl
 from openpyxl.utils import get_column_letter
-from openpyxl.styles import Font
+from openpyxl.styles import Font, PatternFill
+
 from fastapi.responses import StreamingResponse
 from ..services.scheduler import load_closure_dates
 from ..schemas import LessonEditPayload
@@ -25,6 +26,10 @@ class CreateFromPreviewPayload(BaseModel):
 class MakeupPayload(BaseModel):
     lesson_date: date
     
+FILL_ATTENDED = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+FILL_LEAVE = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+FILL_MU = PatternFill(start_color="EAD1DC", end_color="EAD1DC", fill_type="solid")
+
 # =========================================================
 # PAYMENT
 # =========================================================
@@ -312,23 +317,28 @@ def export_dashboard_xlsx(
             ]
 
             for i in range(1, max_lessons + 1):
-                row.append(regular_map.get(i, ""))
+                row.append("")
 
             row.append("Paid" if pkg.payment_status else "Unpaid")
             ws.append(row)
+            current_row = ws.max_row 
+            for i in range(1, max_lessons + 1):
+                lesson = next((l for l in regular_lessons if l.lesson_number == i), None)
+                format_lesson_cell(ws, current_row, 5 + i, lesson)
             first_row_for_student = False
             
             if makeup_lessons:
                 mu_row = ["", "", "", "", "MU"]
-
-                for i in range(max_lessons):
-                    if i < len(makeup_lessons):
-                        mu_row.append(makeup_lessons[i].lesson_date.isoformat())
-                    else:
-                        mu_row.append("")
-
-                mu_row.append("")  # Paid column empty
+                for _ in range(max_lessons):
+                    mu_row.append("")
+                mu_row.append("")
                 ws.append(mu_row)
+
+                mu_row_idx = ws.max_row
+
+                for idx, lesson in enumerate(makeup_lessons):
+                    col = 6 + idx
+                    format_lesson_cell(ws, mu_row_idx, col, lesson)
 
 
     # ✅ SAVE & RETURN — OUTSIDE ALL LOOPS
@@ -346,7 +356,26 @@ def export_dashboard_xlsx(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
-    
+def format_lesson_cell(ws, row_idx, col_idx, lesson):
+    if not lesson:
+        return
+
+    text = lesson.lesson_date.isoformat()
+
+    if lesson.is_makeup:
+        text += " (MU)"
+        ws.cell(row=row_idx, column=col_idx).fill = FILL_MU
+
+    if lesson.status == "leave":
+        text += " (L)"
+        ws.cell(row=row_idx, column=col_idx).fill = FILL_LEAVE
+
+    if lesson.status == "attended":
+        text += " ✓"
+        ws.cell(row=row_idx, column=col_idx).fill = FILL_ATTENDED
+
+    ws.cell(row=row_idx, column=col_idx).value = text
+        
 @extra_router.delete("/students/packages/{package_id}")
 def delete_package(package_id: int, db: Session = Depends(get_db)):
     pkg = crud.get_package(db, package_id)
