@@ -7,6 +7,7 @@ from .date_utils import parse_iso_date, ensure_end_after_start
 from datetime import date, timedelta
 from types import SimpleNamespace
 from .services.scheduler import generate_lessons_for_package, load_closure_dates
+from .models import Package, Lesson
 
 # try to import the lesson generator; if unavailable keep None
 try:
@@ -207,62 +208,60 @@ def toggle_payment(db: Session, package: models.Package, status: bool) -> models
 
 
 # ---------- REGENERATE LESSONS ----------
-def regenerate_package(db: Session, pkg: models.Package):
+def regenerate_package(db: Session, pkg: Package):
     student = pkg.student
-    if not student:
-        raise ValueError("Package has no student")
 
-    blocked = load_closure_dates(db)
-
-    # lesson days
-    if pkg.package_size == 8 and student.lesson_day_2 is not None:
-        days = sorted({student.lesson_day_1, student.lesson_day_2})
-    else:
-        days = [student.lesson_day_1]
-
-    # sort existing lessons
-    lessons = sorted(
-        [l for l in pkg.lessons if l.lesson_date],
-        key=lambda x: x.lesson_date
+    # 🔑 find previous package
+    prev_pkg = (
+        db.query(Package)
+        .filter(
+            Package.student_id == student.student_id,
+            Package.package_id < pkg.package_id
+        )
+        .order_by(Package.package_id.desc())
+        .first()
     )
 
-    # ✅ keep lessons not affected by closure
-    kept = [l for l in lessons if l.lesson_date not in blocked]
-
-    # if nothing kept, anchor from original start
-    if kept:
-        cursor = kept[-1].lesson_date + timedelta(days=1)
+    if prev_pkg and prev_pkg.lessons:
+        last_prev_date = max(
+            l.lesson_date for l in prev_pkg.lessons if l.lesson_date
+        )
+        start_from = last_prev_date + timedelta(days=1)
     else:
-        cursor = student.start_date
+        start_from = student.start_date
 
-    # delete all lessons (we’ll recreate cleanly)
-    db.query(models.Lesson).filter(
-        models.Lesson.package_id == pkg.package_id
+    # generate new lessons
+    lessons = generate_lessons_for_package(
+        db,
+        student,
+        pkg,
+        override_existing=True,
+        start_from=start_from
+    )
+
+    if not lessons:
+        return
+
+    # delete old lessons
+    db.query(Lesson).filter(
+        Lesson.package_id == pkg.package_id
     ).delete(synchronize_session=False)
 
-    new_dates = [l.lesson_date for l in kept]
-
-    # fill missing slots
-    while len(new_dates) < pkg.package_size:
-        if (
-            cursor.weekday() in days
-            and cursor not in blocked
-        ):
-            new_dates.append(cursor)
-        cursor += timedelta(days=1)
-
-    # recreate lessons
-    for i, d in enumerate(new_dates, start=1):
-        db.add(models.Lesson(
+    # insert regenerated lessons
+    for i, l in enumerate(lessons, start=1):
+        db.add(Lesson(
             package_id=pkg.package_id,
             lesson_number=i,
-            lesson_date=d,
+            lesson_date=l.lesson_date,
             is_first=(i == 1),
             is_manual_override=False,
         ))
 
-    pkg.first_lesson_date = new_dates[0]
+    # update first lesson date
+    pkg.first_lesson_date = lessons[0].lesson_date
+
     db.commit()
+
 
 def prune_packages_to_end_date(db: Session, student: models.Student, new_end_date: date):
     """
