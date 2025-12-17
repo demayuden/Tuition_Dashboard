@@ -37,7 +37,6 @@ SessionLocal = sessionmaker(
     autocommit=False,
     future=True
 )
-
 Base = declarative_base(metadata=None)
 Base.metadata.schema = "public"
 
