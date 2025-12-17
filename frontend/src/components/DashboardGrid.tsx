@@ -679,27 +679,30 @@ export default function Dashboard() {
                       return (
                         <td key={idx} className="border px-2 text-sm">
                           {lesson && (
-                            <div className="flex items-center gap-1">
-                              <span>{lesson.lesson_date}</span>
+                          <div
+                            className="flex items-center gap-1 cursor-pointer"
+                            onClick={() => {
+                              setEditingLesson(lesson);
+                              setLessonModalOpen(true);
+                            }}
+                          >
+                            <span>{lesson.lesson_date}</span>
 
-                              {/* Attended */}
-                              {lesson.status === "attended" && (
-                                <span className="text-green-600 font-semibold">✓</span>
-                              )}
+                            {lesson.status === "attended" && (
+                              <span className="text-green-600 font-semibold">✓</span>
+                            )}
 
-                              {/* Leave */}
-                              {lesson.status === "leave" && (
-                                <span className="text-xs px-1 rounded bg-red-100 text-red-700 border">
-                                  L
-                                </span>
-                              )}
-
-                              {/* Make-up badge */}
-                              <span className="text-xs px-1 rounded bg-purple-200 text-purple-800 border">
-                                M
+                            {lesson.status === "leave" && (
+                              <span className="text-xs px-1 rounded bg-red-100 text-red-700 border">
+                                L
                               </span>
-                            </div>
-                          )}
+                            )}
+
+                            <span className="text-xs px-1 rounded bg-purple-200 text-purple-800 border">
+                              M
+                            </span>
+                          </div>
+                        )}
                         </td>
                       );
                     })}

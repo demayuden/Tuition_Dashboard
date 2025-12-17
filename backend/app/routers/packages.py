@@ -481,6 +481,32 @@ def edit_lesson(
                 status_code=400,
                 detail="Make-up cannot be scheduled on regular lesson days"
             )
+            
+    lesson = db.query(models.Lesson).filter_by(lesson_id=lesson_id).first()
+    if not lesson:
+        raise HTTPException(404, "Lesson not found")
+
+    student = lesson.package.student
+
+    # 🚫 BLOCK duplicate lesson date for the same student
+    if payload.lesson_date is not None:
+        conflict = (
+            db.query(models.Lesson)
+            .join(models.Package)
+            .filter(
+                models.Package.student_id == student.student_id,
+                models.Lesson.lesson_date == payload.lesson_date,
+                models.Lesson.lesson_id != lesson.lesson_id,  # 👈 exclude self
+            )
+            .first()
+        )
+
+        if conflict:
+            raise HTTPException(
+                status_code=400,
+                detail="Student already has a lesson on this date"
+            )
+
 
     # ---------------------------------------
     # APPLY UPDATES (NO BLOCKING HERE)
@@ -501,3 +527,26 @@ def edit_lesson(
     db.commit()
     db.refresh(lesson)
     return lesson
+
+@extra_router.delete("/lessons/{lesson_id}")
+def delete_lesson(
+    lesson_id: int,
+    db: Session = Depends(get_db)
+):
+    lesson = db.query(models.Lesson).filter(
+        models.Lesson.lesson_id == lesson_id
+    ).first()
+
+    if not lesson:
+        raise HTTPException(404, "Lesson not found")
+
+    if not lesson.is_makeup:
+        raise HTTPException(
+            status_code=400,
+            detail="Only make-up lessons can be deleted individually"
+        )
+
+    db.delete(lesson)
+    db.commit()
+
+    return {"status": "deleted", "lesson_id": lesson_id}
