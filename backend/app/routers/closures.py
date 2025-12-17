@@ -24,7 +24,7 @@ class ClosureOut(ClosureIn):
     id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 @router.post("/", response_model=ClosureOut)

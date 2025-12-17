@@ -17,7 +17,7 @@ class LessonOut(BaseModel):
     is_makeup: Optional[bool] = False
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class LessonStatusUpdate(BaseModel):
     status: Literal["scheduled", "attended", "leave", "cancelled"]
@@ -34,8 +34,7 @@ class PackageOut(BaseModel):
     lessons: List[LessonOut] = []
 
     class Config:
-        orm_mode = True
-
+        from_attributes = True
 
 # --------------------------------------------
 # Student Schema
@@ -54,7 +53,7 @@ class StudentOut(BaseModel):
     packages: List[PackageOut] = []
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 Student = StudentOut
 # --------------------------------------------

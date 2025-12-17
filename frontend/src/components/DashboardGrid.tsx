@@ -178,15 +178,16 @@ export default function Dashboard() {
       });
 
       if (pkgs.length === 0) {
-        // no packages - show a blank package row (pkg null)
-        flat.push({
-          key: `s-${s.student_id}-nopkg`,
-          student: s,
-          pkg: null,
-          isFirstForStudent: true,
-        });
-        continue;
-      }
+      // Always show students with no packages (ignore tab filter)
+      flat.push({
+        key: `s-${s.student_id}-nopkg`,
+        student: s,
+        pkg: null,
+        isFirstForStudent: true,
+        isOriginalPackage: true,
+      });
+      continue;
+    }
 
       pkgs.forEach((pkg, idx) => {
         // apply tab filters (4 / 8)

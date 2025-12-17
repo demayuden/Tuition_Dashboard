@@ -28,8 +28,17 @@ engine = create_engine(
     DATABASE_URL,
     echo=settings.DEBUG,
     future=True,
-    connect_args=_connect_args
+
+    # ✅ REQUIRED for Neon + Render
+    pool_pre_ping=True,     # detect dead connections
+    pool_recycle=1800,      # recycle every 30 minutes
+    pool_size=5,            # safe default for Render
+    max_overflow=10,
+    pool_timeout=30,
+
+    connect_args=_connect_args,
 )
+
 
 SessionLocal = sessionmaker(
     bind=engine,
