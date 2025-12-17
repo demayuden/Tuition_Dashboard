@@ -83,7 +83,6 @@ function ConfirmModal({
 
 export default function Dashboard() {
   const [students, setStudents] = useState<StudentType[]>([]);
-  const [loading, setLoading] = useState(false);
 
   // Modals / editing
   const [editingStudent, setEditingStudent] = useState<StudentType | null>(null);
@@ -108,8 +107,7 @@ export default function Dashboard() {
 
   const [futurePreviewMap, setFuturePreviewMap] = useState<Record<number, any[]>>({});
   const [showFutureMap, setShowFutureMap] = useState<Record<number, boolean>>({});
-  const [loadingFuture, setLoadingFuture] = useState<Record<number, boolean>>({});
-
+ 
   const [creatingPkg, setCreatingPkg] = useState<number | null>(null);
 
   const [makeupPkgId, setMakeupPkgId] = useState<number | null>(null);
@@ -159,7 +157,7 @@ export default function Dashboard() {
 
   // Build flat rows (one row per package). Keep order stable: students by name, packages by first_lesson_date
   const rows = useMemo(() => {
-    const flat: Array<{ key: string; student: StudentType; pkg: PackageType | null; isFirstForStudent: boolean }> = [];
+    const flat: Array<{ key: string; student: StudentType; pkg: PackageType | null; isFirstForStudent: boolean,isOriginalPackage?: boolean; }> = [];
 
     const filtered = students.filter(s => {
       // student-level filters
@@ -266,7 +264,7 @@ export default function Dashboard() {
       is_first: l.is_first,
     }));
 
-    setPreviewCurrentLessons(current);
+    setPreviewCurrentLessons(current as Lesson[]);
     setPreviewPkgId(pkg.package_id);
     setPreviewOpen(true);
   };

@@ -164,17 +164,6 @@ export default function ClosuresManager() {
     }
   };
 
-  const remove = async (id: number) => {
-    if (!confirm("Delete this closure?")) return;
-    try {
-      await api.delete(`/closures/${id}`);
-      await load();
-    } catch (err) {
-      console.error("delete closure", err);
-      alert("Delete failed");
-    }
-  };
-
   const openEdit = (c: Closure) => {
     setEditing(c);
     setEditOpen(true);
