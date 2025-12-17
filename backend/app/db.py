@@ -38,7 +38,8 @@ SessionLocal = sessionmaker(
     future=True
 )
 
-Base = declarative_base()
+Base = declarative_base(metadata=None)
+Base.metadata.schema = "public"
 
 def get_db():
     db = SessionLocal()
