@@ -112,6 +112,9 @@ export default function Dashboard() {
 
   const [makeupPkgId, setMakeupPkgId] = useState<number | null>(null);
   const [makeupOpen, setMakeupOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [loadingFuture, setLoadingFuture] = useState<Record<number, boolean>>({});
+
 
   const load = async () => {
     setLoading(true);
@@ -168,29 +171,19 @@ export default function Dashboard() {
     filtered.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
     for (const s of filtered) {
-      const pkgs = (s.packages ?? []).slice(); // copy
-      // sort packages by first_lesson_date if present, otherwise by package_id
-      pkgs.sort((a, b) => {
-        const da = a.first_lesson_date ?? "";
-        const db = b.first_lesson_date ?? "";
-        if (da !== db) return da.localeCompare(db);
-        return (a.package_id ?? 0) - (b.package_id ?? 0);
-      });
-
+      const pkgs = Array.isArray(s.packages) ? s.packages : [];
       if (pkgs.length === 0) {
-      // Always show students with no packages (ignore tab filter)
-      flat.push({
-        key: `s-${s.student_id}-nopkg`,
-        student: s,
-        pkg: null,
-        isFirstForStudent: true,
-        isOriginalPackage: true,
-      });
-      continue;
-    }
+        flat.push({
+          key: `s-${s.student_id}-nopkg`,
+          student: s,
+          pkg: null,
+          isFirstForStudent: true,
+          isOriginalPackage: true,
+        });
+        continue;
+      }
 
       pkgs.forEach((pkg, idx) => {
-        // apply tab filters (4 / 8)
         const sz = Number(pkg.package_size);
         if (tab === "4" && sz !== 4) return;
         if (tab === "8" && sz !== 8) return;
@@ -203,6 +196,7 @@ export default function Dashboard() {
           isOriginalPackage: idx === 0,
         });
       });
+
     }
 
     return flat;
