@@ -112,8 +112,8 @@ export default function Dashboard() {
 
   const [makeupPkgId, setMakeupPkgId] = useState<number | null>(null);
   const [makeupOpen, setMakeupOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [loadingFuture, setLoadingFuture] = useState<Record<number, boolean>>({});
+  const [, setLoading] = useState(false);
+  const [, setLoadingFuture] = useState<Record<number, boolean>>({});
 
 
   const load = async () => {
@@ -301,24 +301,7 @@ export default function Dashboard() {
     return null;
   };
 
-  const createPackageFromChunk = async (studentId: number, chunk: any[], packageSize: number, markPaid = false) => {
-    const firstDate = firstDateOfChunk(chunk);
-    if (!firstDate) return alert("No date in this chunk");
-    try {
-      // call the new backend endpoint
-      const params = new URLSearchParams();
-      params.append("package_size", String(packageSize));
-      params.append("start_from", firstDate);
-      if (markPaid) params.append("paid", "true");
-
-      await api.post(`/students/${studentId}/packages?${params.toString()}`);
-      await load(); // reload dashboard
-    } catch (err: any) {
-      console.error("createPackageFromChunk error", err);
-      alert("Failed to create package from chunk: " + (err?.response?.data?.detail || err?.message));
-    }
-  };
-
+  
   // Delete student flow (modal)
   const deleteStudentConfirmed = async () => {
     if (!studentToDelete) return;
@@ -393,7 +376,6 @@ export default function Dashboard() {
 
   // UI
   const maxCols = tab === "4" ? 4 : tab === "8" ? 8 : 8;
-  const totalCols = 5 + maxCols + 2; // name, cefr, group, day, package, lessons..., paid, actions
 
   return (
     <div className="p-6">
@@ -498,7 +480,7 @@ export default function Dashboard() {
             {rows.map((row) => {
               const s = row.student;
               const pkg = row.pkg;
-              const sid = s?.student_id ?? s?.id;
+              const sid = s.student_id;
               const regularLessons = (pkg?.lessons ?? []).filter(l => !l.is_makeup);
               const makeupLessons  = (pkg?.lessons ?? []).filter(l => l.is_makeup);
               const lessonsMap = lessonMapFor(regularLessons);
@@ -528,7 +510,6 @@ export default function Dashboard() {
                     {Array.from({ length: maxCols }).map((_, idx) => {
                       const lesson = lessonsMap[idx + 1];
                       const dateStr = lesson ? (lesson.lesson_date ?? "") : "";
-                      const isManual = lesson ? !!lesson.is_manual_override : false;
                       const isFirst = lesson ? !!lesson.is_first : false;
                       const color = isFirst && pkg && !pkg.payment_status ? "text-red-600 font-semibold" : "";
 
