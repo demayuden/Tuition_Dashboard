@@ -99,6 +99,7 @@ export default function Dashboard() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [studentToDelete, setStudentToDelete] = useState<StudentType | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [packageToDelete, setPackageToDelete] = useState<PackageType | null>(null);
 
   // Filters
   const [tab, setTab] = useState<"all" | "4" | "8">("all");
@@ -301,6 +302,18 @@ export default function Dashboard() {
     return null;
   };
 
+  const deletePackageConfirmed = async () => {
+  if (!packageToDelete) return;
+  try {
+    await api.delete(`/students/packages/${packageToDelete.package_id}`);
+    await load();
+  } catch (err: any) {
+    console.error("Delete package failed", err);
+    alert("Delete failed: " + (err?.response?.data?.detail || err.message));
+  } finally {
+    setPackageToDelete(null);
+  }
+};
   
   // Delete student flow (modal)
   const deleteStudentConfirmed = async () => {
@@ -600,15 +613,11 @@ export default function Dashboard() {
                         {/* 🔴 DELETE PACKAGE — ONLY FOR FUTURE-CREATED */}
                         {!row.isOriginalPackage && (
                           <button
-                            onClick={async () => {
-                              if (!confirm("Delete this package?")) return;
-                              await api.delete(`/students/packages/${pkg.package_id}`);
-                              await load();
-                            }}
-                            className="px-2 py-1 text-sm bg-red-600 text-white rounded"
-                          >
-                            Delete Package
-                          </button>
+                          onClick={() => setPackageToDelete(pkg)}
+                          className="px-2 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
+                        >
+                          Delete Package
+                        </button>
                         )}
                       </>
                     )}
@@ -811,6 +820,14 @@ export default function Dashboard() {
           setStudentToDelete(null);
         }}
         onConfirm={deleteStudentConfirmed}
+      />
+
+      <ConfirmModal
+        open={!!packageToDelete}
+        title="Delete Package?"
+        message="Are you sure you want to delete this package? This action cannot be undone."
+        onCancel={() => setPackageToDelete(null)}
+        onConfirm={deletePackageConfirmed}
       />
     </div>
   );
